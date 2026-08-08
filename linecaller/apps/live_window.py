@@ -6,28 +6,16 @@ import cv2
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QGridLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QMainWindow,
-    QMessageBox,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
+    QCheckBox, QComboBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
+    QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
 from linecaller.apps.live_audio import LiveAudioNotifier
 from linecaller.apps.live_camera_worker import LiveCameraWorker
 from linecaller.apps.live_controller import LiveMatchController
 from linecaller.live.engine import LiveOfficiatingEngine
-from linecaller.live.models import (
-    LiveDecision,
-    LiveEvent,
-    LiveFramePacket,
-)
+from linecaller.live.models import LiveDecision, LiveFramePacket
+from linecaller.live.pipeline_factory import create_live_pipeline_adapter
 
 
 class LiveMatchWindow(QMainWindow):
@@ -41,12 +29,13 @@ class LiveMatchWindow(QMainWindow):
         self.controller.set_ready(calibration_valid=False)
 
         self.live_engine = LiveOfficiatingEngine()
+        self.pipeline_adapter = create_live_pipeline_adapter()
         self.audio = LiveAudioNotifier()
 
         self.worker = None
         self.current_frame = None
         self.current_frame_number = 0
-        self._last_frame_received_at = None
+        self.last_ball = None
 
         self._build_ui()
         self._refresh_status()
@@ -58,7 +47,9 @@ class LiveMatchWindow(QMainWindow):
         top = QHBoxLayout()
 
         self.camera_combo = QComboBox()
-        self.camera_combo.addItems(["Camera 0", "Camera 1", "Camera 2", "Camera 3"])
+        self.camera_combo.addItems(
+            ["Camera 0", "Camera 1", "Camera 2", "Camera 3"]
+        )
 
         self.start_btn = QPushButton("START MATCH")
         self.stop_btn = QPushButton("STOP")
@@ -67,18 +58,20 @@ class LiveMatchWindow(QMainWindow):
         self.calibration_btn = QPushButton("Calibration")
         self.replay_btn = QPushButton("Replay")
         self.replay_btn.setEnabled(False)
-
         self.dev_cb = QCheckBox("Developer Diagnostics")
 
-        top.addWidget(QLabel("Camera:"))
-        top.addWidget(self.camera_combo)
-        top.addWidget(self.start_btn)
-        top.addWidget(self.stop_btn)
-        top.addWidget(self.calibration_btn)
-        top.addWidget(self.replay_btn)
+        for widget in (
+            QLabel("Camera:"),
+            self.camera_combo,
+            self.start_btn,
+            self.stop_btn,
+            self.calibration_btn,
+            self.replay_btn,
+        ):
+            top.addWidget(widget)
+
         top.addStretch(1)
         top.addWidget(self.dev_cb)
-
         outer.addLayout(top)
 
         self.preview = QLabel("Camera preview")
@@ -95,15 +88,13 @@ class LiveMatchWindow(QMainWindow):
         self.latency_value = QLabel("0.0 ms")
         self.conf_value = QLabel("0.0%")
 
-        status_items = [
+        for col, (name, widget) in enumerate([
             ("Tracking", self.tracking_value),
             ("Calibration", self.calibration_value),
             ("FPS", self.fps_value),
             ("Latency", self.latency_value),
             ("Confidence", self.conf_value),
-        ]
-
-        for col, (name, widget) in enumerate(status_items):
+        ]):
             box = QGroupBox(name)
             layout = QVBoxLayout(box)
             widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -125,7 +116,6 @@ class LiveMatchWindow(QMainWindow):
 
         call_layout.addWidget(self.call_label)
         call_layout.addWidget(self.call_detail)
-
         outer.addWidget(call_box)
 
         self.dev_label = QLabel("")
@@ -144,6 +134,7 @@ class LiveMatchWindow(QMainWindow):
         self.dev_cb.toggled.connect(self.dev_label.setVisible)
 
     def mark_calibration_valid(self):
+        # CP-0018 will wire the real Auto -> Assisted -> Manual flow.
         self.controller.set_ready(calibration_valid=True)
         self._refresh_status()
 
@@ -152,12 +143,11 @@ class LiveMatchWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Calibration required",
-                "Run Auto / Assisted / Manual calibration before starting the match.",
+                "Run Auto / Assisted / Manual calibration before starting.",
             )
             return
 
         self.controller.start()
-
         camera_index = self.camera_combo.currentIndex()
 
         self.worker = LiveCameraWorker(camera_index)
@@ -167,7 +157,6 @@ class LiveMatchWindow(QMainWindow):
 
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-
         self.call_detail.setText("LIVE")
 
     def stop_match(self):
@@ -181,11 +170,19 @@ class LiveMatchWindow(QMainWindow):
         self.stop_btn.setEnabled(False)
         self._refresh_status()
 
-    def _on_frame(self, frame, fps, frame_number):
+    def _on_frame(self, frame, capture_fps, frame_number):
         self.current_frame = frame
         self.current_frame_number = frame_number
 
         now = time.perf_counter()
+
+        output = self.pipeline_adapter.process_frame(
+            frame_number=frame_number,
+            frame=frame,
+            timestamp=now,
+        )
+
+        result = output.result
 
         self.live_engine.ingest_frame(
             LiveFramePacket(
@@ -193,26 +190,60 @@ class LiveMatchWindow(QMainWindow):
                 captured_at=now,
                 frame=frame.copy(),
             ),
-            processing_ms=(1000.0 / fps) if fps > 0 else 0.0,
+            processing_ms=output.processing_ms,
         )
 
-        # Product-shell integration:
-        # until the full live Ball->Bounce->Decision adapter is attached,
-        # tracking stays SEARCHING rather than faking LOCKED.
         self.controller.update_runtime(
-            fps=fps,
-            tracking_status="SEARCHING",
+            fps=capture_fps,
+            latency_ms=output.processing_ms,
+            tracking_status=result.tracking_status,
+            confidence=result.confidence,
         )
 
+        if result.ball_x is not None and result.ball_y is not None:
+            self.last_ball = (result.ball_x, result.ball_y)
+        else:
+            self.last_ball = None
+
+        if output.event is not None:
+            evidence = self.live_engine.handle_event(output.event)
+
+            if not evidence.duplicate_suppressed:
+                self.controller.handle_evidence(evidence)
+
+                if evidence.decision in (
+                    LiveDecision.IN,
+                    LiveDecision.OUT,
+                ):
+                    self.audio.announce(evidence.decision.value)
+
+                self.replay_btn.setEnabled(
+                    evidence.replay_requested
+                )
+
+        self._render_frame(frame)
+        self._refresh_status()
+
+    def _render_frame(self, frame):
         display = frame.copy()
+
+        if self.last_ball is not None:
+            x, y = self.last_ball
+            cv2.circle(
+                display,
+                (int(x), int(y)),
+                8,
+                (0,255,0),
+                2,
+            )
 
         if self.dev_cb.isChecked():
             cv2.putText(
                 display,
-                f"Frame {frame_number}",
-                (20, 35),
+                f"Frame {self.current_frame_number}",
+                (20,35),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
+                .7,
                 (255,255,255),
                 2,
             )
@@ -228,36 +259,17 @@ class LiveMatchWindow(QMainWindow):
             QImage.Format.Format_RGB888,
         ).copy()
 
-        pixmap = QPixmap.fromImage(image).scaled(
-            self.preview.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+        self.preview.setPixmap(
+            QPixmap.fromImage(image).scaled(
+                self.preview.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
         )
-
-        self.preview.setPixmap(pixmap)
-
-        self._refresh_status()
 
     def _on_camera_error(self, message):
         QMessageBox.critical(self, "Camera", message)
         self.stop_match()
-
-    def inject_demo_call(self, decision: LiveDecision, confidence=.99):
-        event = LiveEvent(
-            frame_number=self.current_frame_number,
-            decision=decision,
-            confidence=confidence,
-            event_timestamp=time.perf_counter() - 0.03,
-        )
-
-        evidence = self.live_engine.handle_event(event)
-        self.controller.handle_evidence(evidence)
-
-        if decision in (LiveDecision.IN, LiveDecision.OUT):
-            self.audio.announce(decision.value)
-
-        self.replay_btn.setEnabled(evidence.replay_requested)
-        self._refresh_status()
 
     def show_replay(self):
         if not self.live_engine.last_replay:
@@ -284,11 +296,17 @@ class LiveMatchWindow(QMainWindow):
         self.conf_value.setText(f"{s.confidence*100:.1f}%")
         self.call_label.setText(s.last_call)
 
+        if s.replay_active:
+            self.call_detail.setText("INSTANT REPLAY")
+        elif s.run_state.value == "LIVE":
+            self.call_detail.setText("LIVE")
+
         self.dev_label.setText(
             f"run_state={s.run_state.value} | "
             f"frame={self.current_frame_number} | "
             f"replay={s.replay_active} | "
-            f"buffer={len(self.live_engine.replay_buffer)}"
+            f"buffer={len(self.live_engine.replay_buffer)} | "
+            f"adapter={type(self.pipeline_adapter.perception).__name__}"
         )
 
     def closeEvent(self, event):
