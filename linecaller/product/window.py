@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QMainWindow, QStackedWidget
 
+from linecaller.apps.live_window import LiveMatchWindow
+
+from .match_wizard_screen import MatchWizardScreen
 from .navigation import NavigationController, ProductRoute
 from .screens import HomeScreen, PlaceholderScreen
 from .session import ProductSession
@@ -17,18 +20,21 @@ class ProductAppWindow(QMainWindow):
 
         self.navigation = NavigationController()
         self.session = ProductSession()
+        self.live_window = None
 
         self.setStyleSheet(APP_STYLESHEET)
 
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
 
+        self.match_wizard = MatchWizardScreen()
+        self.match_wizard.live_requested.connect(
+            self._open_live_match
+        )
+
         self.screens = {
             ProductRoute.HOME: HomeScreen(),
-            ProductRoute.START_MATCH: PlaceholderScreen(
-                "Start Match",
-                "Match Wizard arrives in CP-0018 Sprint 2.",
-            ),
+            ProductRoute.START_MATCH: self.match_wizard,
             ProductRoute.HISTORY: PlaceholderScreen(
                 "History",
                 "Match history arrives in a later sprint.",
@@ -53,3 +59,29 @@ class ProductAppWindow(QMainWindow):
     def navigate(self, route):
         route = self.navigation.navigate(route)
         self.stack.setCurrentWidget(self.screens[route])
+
+    def _open_live_match(self):
+        self.session.selected_camera = (
+            self.match_wizard.controller.state.selected_camera
+        )
+
+        self.session.calibration_profile = (
+            "wizard-calibration"
+            if self.match_wizard.controller.state.calibration_valid
+            else None
+        )
+
+        self.live_window = LiveMatchWindow()
+
+        # carry selected camera into live shell
+        self.live_window.camera_combo.setCurrentIndex(
+            self.session.selected_camera
+        )
+
+        if self.session.has_calibration:
+            self.live_window.controller.set_ready(
+                calibration_valid=True
+            )
+            self.live_window._refresh_status()
+
+        self.live_window.show()
