@@ -47,6 +47,15 @@ class CalibrationSession:
         self.image_points.append((float(x), float(y)))
         self.result = None
 
+    def prefill_outer_corners(self, corners):
+        if len(corners) != 4:
+            raise ValueError("Exactly four outer corners are required")
+        normalized = [(float(x), float(y)) for x, y in corners]
+        # Preserve manually-entered Kitchen points only if outer points already existed
+        kitchen = self.image_points[4:] if len(self.image_points) > 4 else []
+        self.image_points = normalized + list(kitchen)
+        self.result = None
+
     def move_point(self, index: int, x: float, y: float):
         if not (0 <= index < len(self.image_points)):
             raise IndexError(index)
