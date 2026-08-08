@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: open-linecaller-core
+Version: 0.1.0
+Summary: Core geometry, decision and validation engine for Open-LineCaller pickleball officiating
+Requires-Python: >=3.12
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
