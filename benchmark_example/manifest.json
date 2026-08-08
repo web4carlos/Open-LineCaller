@@ -1,0 +1,10 @@
+{
+  "clips": [
+    {
+      "id": "clip001",
+      "video": "videos/clip001.mp4",
+      "calibration": "calibrations/clip001.json",
+      "expected": "expected/clip001.json"
+    }
+  ]
+}
