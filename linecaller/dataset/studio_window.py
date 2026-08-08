@@ -15,7 +15,7 @@ from linecaller.dataset.models import BallBox
 from linecaller.dataset.studio_session import DatasetStudioSession
 from linecaller.dataset.studio_widget import AnnotationVideoWidget
 from linecaller.dataset.validation import validate_clip
-from linecaller.proposals.mock_engine import MockProposalEngine
+from linecaller.dataset.proposal_engine_factory import create_dataset_studio_proposal_engine
 
 
 class DatasetStudioWindow(QMainWindow):
@@ -156,11 +156,9 @@ class DatasetStudioWindow(QMainWindow):
             frame_count=self.frame_count,
         )
 
-        # Mock engine proves UI/API integration.
-        # CP-0014C will replace this with the first real AI detector.
         self.controller = AssistedAnnotationController(
             self.session,
-            engine=MockProposalEngine(),
+            engine=create_dataset_studio_proposal_engine(),
         )
 
         self.slider.setEnabled(True)
