@@ -16,6 +16,15 @@ from linecaller.apps.live_controller import LiveMatchController
 from linecaller.live.engine import LiveOfficiatingEngine
 from linecaller.live.models import LiveDecision, LiveFramePacket
 from linecaller.live.pipeline_factory import create_live_pipeline_adapter
+from linecaller.product.hud_policy import (
+    confidence_metric,
+    fps_metric,
+    last_call_presentation,
+    latency_metric,
+    replay_metric,
+    tracking_metric,
+)
+from linecaller.product.hud_widgets import ConfidenceCard, MetricCard, level_style
 
 
 class LiveMatchWindow(QMainWindow):
@@ -23,7 +32,7 @@ class LiveMatchWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("Open-LineCaller LIVE")
-        self.resize(1400, 900)
+        self.resize(1450, 940)
 
         self.controller = LiveMatchController()
         self.controller.set_ready(calibration_valid=False)
@@ -82,25 +91,22 @@ class LiveMatchWindow(QMainWindow):
 
         grid = QGridLayout()
 
-        self.tracking_value = QLabel("SEARCHING")
-        self.calibration_value = QLabel("REQUIRED")
-        self.fps_value = QLabel("0.0")
-        self.latency_value = QLabel("0.0 ms")
-        self.conf_value = QLabel("0.0%")
+        self.tracking_card = MetricCard("Tracking")
+        self.fps_card = MetricCard("FPS")
+        self.latency_card = MetricCard("Latency")
+        self.confidence_card = ConfidenceCard()
+        self.replay_card = MetricCard("Replay")
+        self.calibration_card = MetricCard("Calibration")
 
-        for col, (name, widget) in enumerate([
-            ("Tracking", self.tracking_value),
-            ("Calibration", self.calibration_value),
-            ("FPS", self.fps_value),
-            ("Latency", self.latency_value),
-            ("Confidence", self.conf_value),
+        for col, card in enumerate([
+            self.tracking_card,
+            self.fps_card,
+            self.latency_card,
+            self.confidence_card,
+            self.calibration_card,
+            self.replay_card,
         ]):
-            box = QGroupBox(name)
-            layout = QVBoxLayout(box)
-            widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            widget.setStyleSheet("font-size:22px; font-weight:700;")
-            layout.addWidget(widget)
-            grid.addWidget(box, 0, col)
+            grid.addWidget(card, 0, col)
 
         outer.addLayout(grid)
 
@@ -111,8 +117,9 @@ class LiveMatchWindow(QMainWindow):
         self.call_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.call_label.setStyleSheet("font-size:72px; font-weight:900;")
 
-        self.call_detail = QLabel("Waiting for match")
+        self.call_detail = QLabel("LIVE")
         self.call_detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.call_detail.setStyleSheet("font-size:18px;")
 
         call_layout.addWidget(self.call_label)
         call_layout.addWidget(self.call_detail)
@@ -134,7 +141,6 @@ class LiveMatchWindow(QMainWindow):
         self.dev_cb.toggled.connect(self.dev_label.setVisible)
 
     def mark_calibration_valid(self):
-        # CP-0018 will wire the real Auto -> Assisted -> Manual flow.
         self.controller.set_ready(calibration_valid=True)
         self._refresh_status()
 
@@ -289,21 +295,45 @@ class LiveMatchWindow(QMainWindow):
     def _refresh_status(self):
         s = self.controller.state
 
-        self.tracking_value.setText(s.tracking_status)
-        self.calibration_value.setText(s.calibration_status)
-        self.fps_value.setText(f"{s.fps:.1f}")
-        self.latency_value.setText(f"{s.latency_ms:.1f} ms")
-        self.conf_value.setText(f"{s.confidence*100:.1f}%")
-        self.call_label.setText(s.last_call)
+        self.tracking_card.set_metric(
+            tracking_metric(s.tracking_status)
+        )
+        self.fps_card.set_metric(
+            fps_metric(s.fps)
+        )
+        self.latency_card.set_metric(
+            latency_metric(s.latency_ms)
+        )
+        self.confidence_card.set_metric(
+            confidence_metric(s.confidence)
+        )
+        self.replay_card.set_metric(
+            replay_metric(bool(self.live_engine.last_replay))
+        )
 
-        if s.replay_active:
-            self.call_detail.setText("INSTANT REPLAY")
-        elif s.run_state.value == "LIVE":
-            self.call_detail.setText("LIVE")
+        calibration_ok = s.calibration_status == "VALID"
+        from linecaller.product.hud_models import HUDMetric, StatusLevel
+        self.calibration_card.set_metric(
+            HUDMetric(
+                "Calibration",
+                s.calibration_status,
+                StatusLevel.OK if calibration_ok else StatusLevel.ERROR,
+                "Ready" if calibration_ok else "Calibration required",
+            )
+        )
+
+        presentation = last_call_presentation(s.last_call)
+
+        self.call_label.setText(presentation.call)
+        self.call_label.setStyleSheet(
+            f"font-size:72px; font-weight:900; {level_style(presentation.level)}"
+        )
+        self.call_detail.setText(presentation.detail)
 
         self.dev_label.setText(
             f"run_state={s.run_state.value} | "
             f"frame={self.current_frame_number} | "
+            f"tracking={s.tracking_status} | "
             f"replay={s.replay_active} | "
             f"buffer={len(self.live_engine.replay_buffer)} | "
             f"adapter={type(self.pipeline_adapter.perception).__name__}"
