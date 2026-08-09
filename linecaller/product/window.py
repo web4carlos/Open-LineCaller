@@ -8,6 +8,7 @@ from .match_wizard_screen import MatchWizardScreen
 from .navigation import NavigationController, ProductRoute
 from .screens import HomeScreen, PlaceholderScreen
 from .session import ProductSession
+from .summary_widget import MatchSummaryScreen
 from .theme import APP_STYLESHEET
 
 
@@ -32,12 +33,17 @@ class ProductAppWindow(QMainWindow):
             self._open_live_match
         )
 
+        self.summary_screen = MatchSummaryScreen()
+        self.summary_screen.home_requested.connect(
+            self._return_home
+        )
+
         self.screens = {
             ProductRoute.HOME: HomeScreen(),
             ProductRoute.START_MATCH: self.match_wizard,
             ProductRoute.HISTORY: PlaceholderScreen(
                 "History",
-                "Match history arrives in a later sprint.",
+                "Match history UI arrives after CP-0018.",
             ),
             ProductRoute.SETTINGS: PlaceholderScreen(
                 "Settings",
@@ -52,13 +58,23 @@ class ProductAppWindow(QMainWindow):
         for route in ProductRoute:
             screen = self.screens[route]
             self.stack.addWidget(screen)
-            screen.navigate_requested.connect(self.navigate)
+            screen.navigate_requested.connect(
+                self.navigate
+            )
 
-        self.navigate(ProductRoute.HOME)
+        self.stack.addWidget(
+            self.summary_screen
+        )
+
+        self.navigate(
+            ProductRoute.HOME
+        )
 
     def navigate(self, route):
         route = self.navigation.navigate(route)
-        self.stack.setCurrentWidget(self.screens[route])
+        self.stack.setCurrentWidget(
+            self.screens[route]
+        )
 
     def _open_live_match(self):
         self.session.selected_camera = (
@@ -73,7 +89,6 @@ class ProductAppWindow(QMainWindow):
 
         self.live_window = LiveMatchWindow()
 
-        # carry selected camera into live shell
         self.live_window.camera_combo.setCurrentIndex(
             self.session.selected_camera
         )
@@ -84,4 +99,25 @@ class ProductAppWindow(QMainWindow):
             )
             self.live_window._refresh_status()
 
+        self.live_window.match_finished.connect(
+            self._show_summary
+        )
+
         self.live_window.show()
+
+    def _show_summary(self, summary):
+        self.summary_screen.set_summary(
+            summary
+        )
+        self.stack.setCurrentWidget(
+            self.summary_screen
+        )
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _return_home(self):
+        self.match_wizard.controller.reset()
+        self.navigate(
+            ProductRoute.HOME
+        )
