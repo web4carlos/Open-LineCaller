@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import cv2
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
@@ -16,6 +16,7 @@ from linecaller.apps.live_controller import LiveMatchController
 from linecaller.live.engine import LiveOfficiatingEngine
 from linecaller.live.models import LiveDecision, LiveFramePacket
 from linecaller.live.pipeline_factory import create_live_pipeline_adapter
+from linecaller.product.hud_models import HUDMetric, StatusLevel
 from linecaller.product.hud_policy import (
     confidence_metric,
     fps_metric,
@@ -25,6 +26,10 @@ from linecaller.product.hud_policy import (
     tracking_metric,
 )
 from linecaller.product.hud_widgets import ConfidenceCard, MetricCard, level_style
+from linecaller.product.replay_controller import ReplayPlaybackController
+from linecaller.product.replay_models import ReplayState
+from linecaller.product.replay_render import replay_zoom
+from linecaller.product.replay_widget import ReplayOverlay
 
 
 class LiveMatchWindow(QMainWindow):
@@ -32,7 +37,7 @@ class LiveMatchWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("Open-LineCaller LIVE")
-        self.resize(1450, 940)
+        self.resize(1450, 960)
 
         self.controller = LiveMatchController()
         self.controller.set_ready(calibration_valid=False)
@@ -45,6 +50,13 @@ class LiveMatchWindow(QMainWindow):
         self.current_frame = None
         self.current_frame_number = 0
         self.last_ball = None
+
+        self.replay_controller = ReplayPlaybackController(
+            speed=0.25
+        )
+
+        self.replay_timer = QTimer(self)
+        self.replay_timer.timeout.connect(self._replay_tick)
 
         self._build_ui()
         self._refresh_status()
@@ -67,6 +79,13 @@ class LiveMatchWindow(QMainWindow):
         self.calibration_btn = QPushButton("Calibration")
         self.replay_btn = QPushButton("Replay")
         self.replay_btn.setEnabled(False)
+
+        self.speed_combo = QComboBox()
+        self.speed_combo.addItems(["0.25x", "0.5x", "1x"])
+        self.speed_combo.currentTextChanged.connect(
+            self._replay_speed_changed
+        )
+
         self.dev_cb = QCheckBox("Developer Diagnostics")
 
         for widget in (
@@ -76,6 +95,8 @@ class LiveMatchWindow(QMainWindow):
             self.stop_btn,
             self.calibration_btn,
             self.replay_btn,
+            QLabel("Replay Speed:"),
+            self.speed_combo,
         ):
             top.addWidget(widget)
 
@@ -85,9 +106,12 @@ class LiveMatchWindow(QMainWindow):
 
         self.preview = QLabel("Camera preview")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview.setMinimumHeight(560)
+        self.preview.setMinimumHeight(540)
         self.preview.setStyleSheet("background:#111; color:#ddd;")
         outer.addWidget(self.preview, 1)
+
+        self.replay_overlay = ReplayOverlay()
+        outer.addWidget(self.replay_overlay)
 
         grid = QGridLayout()
 
@@ -166,6 +190,9 @@ class LiveMatchWindow(QMainWindow):
         self.call_detail.setText("LIVE")
 
     def stop_match(self):
+        self.replay_timer.stop()
+        self.replay_controller.finish()
+
         if self.worker is not None:
             self.worker.stop()
             self.worker.wait(2000)
@@ -223,17 +250,115 @@ class LiveMatchWindow(QMainWindow):
                 ):
                     self.audio.announce(evidence.decision.value)
 
-                self.replay_btn.setEnabled(
-                    evidence.replay_requested
-                )
+                if evidence.replay_requested:
+                    self._begin_replay(
+                        decision_frame=evidence.frame_number,
+                        zoom_x=(
+                            result.ball_x
+                            if result.ball_x is not None
+                            else None
+                        ),
+                        zoom_y=(
+                            result.ball_y
+                            if result.ball_y is not None
+                            else None
+                        ),
+                    )
 
-        self._render_frame(frame)
+        if self.replay_controller.state == ReplayState.LIVE:
+            self._render_frame(frame)
+
         self._refresh_status()
 
-    def _render_frame(self, frame):
+    def _begin_replay(
+        self,
+        *,
+        decision_frame,
+        zoom_x=None,
+        zoom_y=None,
+    ):
+        started = self.replay_controller.begin(
+            self.live_engine.last_replay,
+            decision_frame=decision_frame,
+            zoom_x=zoom_x,
+            zoom_y=zoom_y,
+        )
+
+        if not started:
+            return
+
+        self.replay_btn.setEnabled(True)
+        self.replay_overlay.update_from_model(
+            self.replay_controller.view_model()
+        )
+
+        self.replay_timer.start(
+            self._replay_interval_ms()
+        )
+
+    def _replay_interval_ms(self):
+        base_fps = max(1.0, self.controller.state.fps or 30.0)
+        speed = self.replay_controller.speed
+        return max(1, int(round(1000.0 / (base_fps * speed))))
+
+    def _replay_speed_changed(self, text):
+        mapping = {
+            "0.25x": 0.25,
+            "0.5x": 0.5,
+            "1x": 1.0,
+        }
+        self.replay_controller.set_speed(mapping[text])
+
+        if self.replay_timer.isActive():
+            self.replay_timer.start(
+                self._replay_interval_ms()
+            )
+
+    def _replay_tick(self):
+        packet = self.replay_controller.advance()
+
+        model = self.replay_controller.view_model()
+        self.replay_overlay.update_from_model(model)
+
+        if packet is not None:
+            frame = packet.frame.copy()
+
+            frame = replay_zoom(
+                frame,
+                x=model.zoom_x,
+                y=model.zoom_y,
+                scale=2.0,
+            )
+
+            cv2.putText(
+                frame,
+                "REPLAY",
+                (20, 35),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.9,
+                (255,255,255),
+                2,
+                cv2.LINE_AA,
+            )
+
+            self._render_frame(frame, overlay_ball=False)
+
+        if self.replay_controller.state == ReplayState.RESUME:
+            self.replay_timer.stop()
+            self.replay_controller.finish()
+            self.replay_overlay.update_from_model(
+                self.replay_controller.view_model()
+            )
+            self.controller.state.replay_active = False
+            self.call_detail.setText("LIVE")
+
+            if self.current_frame is not None:
+                self._render_frame(self.current_frame)
+
+    def _render_frame(self, frame, *, overlay_ball=True):
         display = frame.copy()
 
-        if self.last_ball is not None:
+        if overlay_ball and self.last_ball is not None:
             x, y = self.last_ball
             cv2.circle(
                 display,
@@ -247,9 +372,9 @@ class LiveMatchWindow(QMainWindow):
             cv2.putText(
                 display,
                 f"Frame {self.current_frame_number}",
-                (20,35),
+                (20,70),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                .7,
+                .65,
                 (255,255,255),
                 2,
             )
@@ -286,10 +411,18 @@ class LiveMatchWindow(QMainWindow):
             )
             return
 
-        QMessageBox.information(
-            self,
-            "Replay",
-            f"Replay ready: {len(self.live_engine.last_replay)} buffered frames.",
+        self._begin_replay(
+            decision_frame=self.current_frame_number,
+            zoom_x=(
+                self.last_ball[0]
+                if self.last_ball is not None
+                else None
+            ),
+            zoom_y=(
+                self.last_ball[1]
+                if self.last_ball is not None
+                else None
+            ),
         )
 
     def _refresh_status(self):
@@ -312,7 +445,7 @@ class LiveMatchWindow(QMainWindow):
         )
 
         calibration_ok = s.calibration_status == "VALID"
-        from linecaller.product.hud_models import HUDMetric, StatusLevel
+
         self.calibration_card.set_metric(
             HUDMetric(
                 "Calibration",
@@ -328,15 +461,19 @@ class LiveMatchWindow(QMainWindow):
         self.call_label.setStyleSheet(
             f"font-size:72px; font-weight:900; {level_style(presentation.level)}"
         )
-        self.call_detail.setText(presentation.detail)
+
+        if self.replay_controller.state != ReplayState.LIVE:
+            self.call_detail.setText("INSTANT REPLAY")
+        else:
+            self.call_detail.setText(presentation.detail)
 
         self.dev_label.setText(
             f"run_state={s.run_state.value} | "
             f"frame={self.current_frame_number} | "
             f"tracking={s.tracking_status} | "
-            f"replay={s.replay_active} | "
+            f"replay_state={self.replay_controller.state.value} | "
             f"buffer={len(self.live_engine.replay_buffer)} | "
-            f"adapter={type(self.pipeline_adapter.perception).__name__}"
+            f"replays={self.replay_controller.metrics.replay_count}"
         )
 
     def closeEvent(self, event):
