@@ -46,6 +46,7 @@ class ValidationLabWindow(QMainWindow):
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumHeight(520)
         self.preview.setStyleSheet("background:#111;color:#ddd;")
+        self.preview.setScaledContents(False)
         layout.addWidget(self.preview, 1)
 
         self.slider = QSlider(Qt.Orientation.Horizontal)
@@ -109,18 +110,40 @@ class ValidationLabWindow(QMainWindow):
         self.slider.blockSignals(True)
         self.slider.setValue(frame_number)
         self.slider.blockSignals(False)
-
+#########################
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb.shape
-        img = QImage(rgb.data, w, h, ch*w, QImage.Format.Format_RGB888).copy()
+
+        h, w = rgb.shape[:2]
+        bytes_per_line = rgb.strides[0]
+
+        image = QImage(
+            rgb.data,
+            w,
+            h,
+            bytes_per_line,
+            QImage.Format.Format_RGB888,
+        ).copy()
+
+        pixmap = QPixmap.fromImage(image)
+
+        print(
+            f"Frame={frame_number} "
+            f"Pixmap Null={pixmap.isNull()} "
+            f"Label={self.preview.width()}x{self.preview.height()}"
+        )
+
+        if pixmap.isNull():
+            self.status.setText("ERROR: QPixmap creation failed")
+            return
+        cv2.imwrite(r"C:\validation\debug_frame.jpg", frame)
         self.preview.setPixmap(
-            QPixmap.fromImage(img).scaled(
+            pixmap.scaled(
                 self.preview.size(),
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
         )
-
+#####################################
         self.status.setText(
             f"{self.session.video_path.name} | Frame {frame_number}/{self.frame_count - 1} | "
             f"Ground truth events: {len(self.session.truth_events)}"
