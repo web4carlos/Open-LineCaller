@@ -1,2 +1,7 @@
 from .classical import ClassicalVisionProvider
-__all__ = ["ClassicalVisionProvider"]
+from .tracknet_csv import TrackNetCsvVisionProvider
+
+__all__ = [
+    "ClassicalVisionProvider",
+    "TrackNetCsvVisionProvider",
+]
