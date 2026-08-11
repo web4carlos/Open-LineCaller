@@ -2,29 +2,32 @@ import cv2
 from PySide6.QtCore import Qt,Signal
 from PySide6.QtGui import QImage,QPainter,QPen,QPixmap
 from PySide6.QtWidgets import QLabel
+
 class AnnotationImageView(QLabel):
     image_clicked=Signal(float,float)
     def __init__(self):
-        super().__init__("Open a video to begin");self.setAlignment(Qt.AlignmentFlag.AlignCenter);self.setMinimumSize(900,560)
+        super().__init__("Open a video to begin")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter);self.setMinimumSize(900,560)
         self.setStyleSheet("background:#050914;border:1px solid #263453;border-radius:14px;color:#8190aa;")
         self._pixmap_original=None;self._image_width=0;self._image_height=0;self._annotation=None
     def set_frame(self,frame):
         if frame is None:return
         rgb=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB);h,w=rgb.shape[:2]
-        image=QImage(rgb.data,w,h,rgb.strides[0],QImage.Format.Format_RGB888).copy()
-        self._pixmap_original=QPixmap.fromImage(image);self._image_width=w;self._image_height=h;self._render()
-    def set_annotation(self,annotation):self._annotation=annotation;self._render()
+        img=QImage(rgb.data,w,h,rgb.strides[0],QImage.Format.Format_RGB888).copy()
+        self._pixmap_original=QPixmap.fromImage(img);self._image_width=w;self._image_height=h;self._render()
+    def set_annotation(self,a):self._annotation=a;self._render()
     def _scaled_pixmap(self):
         if self._pixmap_original is None:return None
         return self._pixmap_original.scaled(self.size(),Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation)
     def _render(self):
         pix=self._scaled_pixmap()
         if pix is None:return
-        rendered=QPixmap(pix);p=QPainter(rendered)
-        if self._annotation and self._annotation.get("type")=="positive":
-            x=float(self._annotation["x"]);y=float(self._annotation["y"]);box=int(self._annotation.get("box_size_px",24))
+        rendered=QPixmap(pix);p=QPainter(rendered);a=self._annotation
+        if a and a.get("type")=="positive":
+            x=float(a["x"]);y=float(a["y"]);old=int(a.get("box_size_px",24))
+            bw0=int(a.get("box_width_px",old));bh0=int(a.get("box_height_px",old))
             sx=pix.width()/max(1,self._image_width);sy=pix.height()/max(1,self._image_height)
-            cx=x*sx;cy=y*sy;bw=max(8.0,box*sx);bh=max(8.0,box*sy)
+            cx=x*sx;cy=y*sy;bw=max(8.0,bw0*sx);bh=max(8.0,bh0*sy)
             pen=QPen(Qt.GlobalColor.green);pen.setWidth(3);p.setPen(pen)
             p.drawRect(int(cx-bw/2),int(cy-bh/2),int(bw),int(bh))
             p.drawLine(int(cx-14),int(cy),int(cx+14),int(cy));p.drawLine(int(cx),int(cy-14),int(cx),int(cy+14))

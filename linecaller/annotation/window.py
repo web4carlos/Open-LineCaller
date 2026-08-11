@@ -8,6 +8,8 @@ from .models import BallAnnotation
 from .session import AnnotationSession
 from .video_source import AnnotationVideoSource
 from .yolo import YoloLabelWriter
+from .smart_bbox import SmartBBoxDetector
+from .zoom_widget import AnnotationZoomWidget
 
 APP_QSS="""
 QMainWindow,QWidget{background:#0b1020;color:#e9eefb;font-family:"Segoe UI";font-size:10.5pt;}
@@ -30,6 +32,7 @@ class AnnotationStudioWindow(QMainWindow):
         self.setWindowTitle("Open-LineCaller — Pickleball Annotation Studio")
         self.resize(1500,920);self.setMinimumSize(1150,740);self.setStyleSheet(APP_QSS)
         self.source=None;self.session=None;self.current_frame=None
+        self.smart_bbox = SmartBBoxDetector()
         self._build_ui();self._build_menu();self._build_shortcuts()
         self.statusBar().showMessage("Ready — Open a video")
     def _card(self):
@@ -63,6 +66,8 @@ class AnnotationStudioWindow(QMainWindow):
         ins=QLabel("1. Click the ball\n2. Press SPACE\n\nNo ball visible?\nPress N");ins.setWordWrap(True);ins.setObjectName("Metric");side.addWidget(ins)
         row=QHBoxLayout();row.addWidget(QLabel("Box size"))
         self.box_size=QSpinBox();self.box_size.setRange(8,100);self.box_size.setSingleStep(2);self.box_size.setValue(24);self.box_size.valueChanged.connect(self._box_size_changed);row.addWidget(self.box_size);side.addLayout(row)
+        self.zoom_widget=AnnotationZoomWidget();side.addWidget(self.zoom_widget)
+        self.candidate_label=QLabel('Candidate\n—');self.candidate_label.setObjectName('Metric');side.addWidget(self.candidate_label)
         self.positive_label=QLabel("Positive\n0");self.positive_label.setObjectName("Metric");side.addWidget(self.positive_label)
         self.negative_label=QLabel("Negative\n0");self.negative_label.setObjectName("Metric");side.addWidget(self.negative_label)
         self.labeled_label=QLabel("Labeled\n0");self.labeled_label.setObjectName("Metric");side.addWidget(self.labeled_label)
@@ -108,10 +113,20 @@ class AnnotationStudioWindow(QMainWindow):
         self.session.save();self.image_view.set_annotation(data)
 
     def _on_image_clicked(self,x,y):
-        if self.session is None:return
-        self.session.mark_positive(self.session.current_frame,x,y);self.session.save()
-        self.image_view.set_annotation(self.session.annotation_for(self.session.current_frame))
-        self._refresh_stats();self.statusBar().showMessage("Ball marked — press SPACE")
+        if self.session is None or self.current_frame is None:return
+        c=self.smart_bbox.detect(self.current_frame,x,y)
+        self.session.mark_positive(
+            self.session.current_frame,c.center_x,c.center_y,
+            box_width_px=c.width,box_height_px=c.height,
+            score=c.score,method=c.method
+        )
+        self.session.save()
+        data=self.session.annotation_for(self.session.current_frame)
+        self.image_view.set_annotation(data)
+        self.zoom_widget.show_candidate(self.current_frame,c.center_x,c.center_y,c.width,c.height)
+        self.candidate_label.setText(f'Candidate\n{c.score*100:.0f}%' if c.score>0 else 'Candidate\nMANUAL')
+        self._refresh_stats()
+        self.statusBar().showMessage('Smart box ready — SPACE accepts; click again to correct')
 
     def load_frame(self,frame_number):
         if self.source is None or self.session is None:return
@@ -139,7 +154,13 @@ class AnnotationStudioWindow(QMainWindow):
         if data.get("type")=="negative":
             YoloLabelWriter.write_negative(label_path)
         else:
-            ann=BallAnnotation(self.session.current_frame,float(data["x"]),float(data["y"]),int(data.get("box_size_px",self.session.box_size_px)))
+            old_size=int(data.get('box_size_px',self.session.box_size_px))
+            ann=BallAnnotation(
+                self.session.current_frame,
+                float(data['x']),float(data['y']),
+                int(data.get('box_width_px',old_size)),
+                int(data.get('box_height_px',old_size))
+            )
             YoloLabelWriter.write_positive(label_path,ann,self.source.width,self.source.height)
         return True
 
