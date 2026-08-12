@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import csv
@@ -35,7 +35,11 @@ def main():
     p.add_argument("--window", type=int, default=3)
     p.add_argument("--min-pre-speed", type=float, default=1.5)
     p.add_argument("--min-post-speed", type=float, default=1.5)
-    p.add_argument("--refractory-frames", type=int, default=8)
+    p.add_argument("--refractory-frames", type=int, default=10)
+    p.add_argument("--min-confidence", type=float, default=0.28)
+    p.add_argument("--max-horizontal-jump", type=float, default=65.0)
+    p.add_argument("--peak-tolerance-px", type=float, default=8.0)
+    p.add_argument("--min-raw-ratio", type=float, default=0.35)
     a = p.parse_args()
 
     out = Path(a.output_dir)
@@ -50,6 +54,10 @@ def main():
         min_pre_speed=a.min_pre_speed,
         min_post_speed=a.min_post_speed,
         refractory_frames=a.refractory_frames,
+        min_confidence=a.min_confidence,
+        max_horizontal_jump=a.max_horizontal_jump,
+        peak_tolerance_px=a.peak_tolerance_px,
+        min_raw_ratio=a.min_raw_ratio,
     )
 
     samples = list(read_track_csv(a.track_csv))
@@ -74,7 +82,6 @@ def main():
             ],
         )
         wr.writeheader()
-
         for e in events:
             wr.writerow({
                 "frame": e.frame,
@@ -105,7 +112,6 @@ def main():
     active = None
     active_until = -1
     frame_no = 0
-
     max_overlay_frames = len(samples)
 
     while frame_no < max_overlay_frames:
@@ -183,6 +189,10 @@ def main():
         f"min_pre_speed={a.min_pre_speed}\n"
         f"min_post_speed={a.min_post_speed}\n"
         f"refractory_frames={a.refractory_frames}\n"
+        f"min_confidence={a.min_confidence}\n"
+        f"max_horizontal_jump={a.max_horizontal_jump}\n"
+        f"peak_tolerance_px={a.peak_tolerance_px}\n"
+        f"min_raw_ratio={a.min_raw_ratio}\n"
         f"events={events_path}\n"
         f"overlay={overlay_path}\n"
     )
@@ -193,4 +203,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
