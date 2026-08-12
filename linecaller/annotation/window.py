@@ -10,6 +10,7 @@ from .video_source import AnnotationVideoSource
 from .yolo import YoloLabelWriter
 from .smart_bbox import SmartBBoxDetector
 from .zoom_widget import AnnotationZoomWidget
+from .auto_assist import CombinedAutoAssist
 
 APP_QSS="""
 QMainWindow,QWidget{background:#0b1020;color:#e9eefb;font-family:"Segoe UI";font-size:10.5pt;}
@@ -33,6 +34,8 @@ class AnnotationStudioWindow(QMainWindow):
         self.resize(1500,920);self.setMinimumSize(1150,740);self.setStyleSheet(APP_QSS)
         self.source=None;self.session=None;self.current_frame=None
         self.smart_bbox = SmartBBoxDetector()
+        self.auto_assist = CombinedAutoAssist()
+        self.auto_assist_enabled = True
         self._build_ui();self._build_menu();self._build_shortcuts()
         self.statusBar().showMessage("Ready — Open a video")
     def _card(self):
@@ -56,6 +59,10 @@ class AnnotationStudioWindow(QMainWindow):
 
         actions=QHBoxLayout()
         self.open_btn=QPushButton("OPEN VIDEO");self.open_btn.setObjectName("Primary");self.open_btn.clicked.connect(self.open_video);actions.addWidget(self.open_btn)
+        self.auto_btn=QPushButton('AUTO ASSIST: ON')
+        self.auto_btn.setObjectName('Primary')
+        self.auto_btn.clicked.connect(self.toggle_auto_assist)
+        actions.addWidget(self.auto_btn)
         b=QPushButton("SAVE + NEXT   [SPACE]");b.setObjectName("Primary");b.clicked.connect(self.save_and_next);actions.addWidget(b)
         b=QPushButton("NO BALL   [N]");b.setObjectName("Negative");b.clicked.connect(self.mark_negative);actions.addWidget(b)
         b=QPushButton("DELETE LABEL");b.setObjectName("Danger");b.clicked.connect(self.delete_label);actions.addWidget(b)
@@ -114,19 +121,22 @@ class AnnotationStudioWindow(QMainWindow):
 
     def _on_image_clicked(self,x,y):
         if self.session is None or self.current_frame is None:return
-        c=self.smart_bbox.detect(self.current_frame,x,y)
+        c=self.auto_assist.refine_click(self.current_frame,x,y)
         self.session.mark_positive(
-            self.session.current_frame,c.center_x,c.center_y,
+            self.session.current_frame,c.x,c.y,
             box_width_px=c.width,box_height_px=c.height,
-            score=c.score,method=c.method
+            score=c.confidence,method=c.source
         )
         self.session.save()
         data=self.session.annotation_for(self.session.current_frame)
         self.image_view.set_annotation(data)
-        self.zoom_widget.show_candidate(self.current_frame,c.center_x,c.center_y,c.width,c.height)
-        self.candidate_label.setText(f'Candidate\n{c.score*100:.0f}%' if c.score>0 else 'Candidate\nMANUAL')
+        self.zoom_widget.show_candidate(self.current_frame,c.x,c.y,c.width,c.height)
+        self.candidate_label.setText(
+            f"{c.source}\n{c.confidence*100:.0f}%"
+            if c.confidence>0 else f"{c.source}\nMANUAL"
+        )
         self._refresh_stats()
-        self.statusBar().showMessage('Smart box ready — SPACE accepts; click again to correct')
+        self.statusBar().showMessage("Corrected — SPACE accepts")
 
     def load_frame(self,frame_number):
         if self.source is None or self.session is None:return
@@ -135,8 +145,45 @@ class AnnotationStudioWindow(QMainWindow):
         if frame is None:return
         self.session.current_frame=frame_number;self.session.save();self.current_frame=frame
         self.image_view.set_frame(frame);self.image_view.set_annotation(self.session.annotation_for(frame_number))
+        self._auto_suggest_current()
         self.frame_label.setText(f"Frame {frame_number:,} / {max(0,self.source.frame_count-1):,}")
         self._refresh_stats()
+
+    def toggle_auto_assist(self):
+        self.auto_assist_enabled=not self.auto_assist_enabled
+        self.auto_btn.setText("AUTO ASSIST: ON" if self.auto_assist_enabled else "AUTO ASSIST: OFF")
+        if self.auto_assist_enabled:self._auto_suggest_current()
+
+    def _previous_positive_xy(self):
+        if self.session is None:return None
+        current=int(self.session.current_frame)
+        for f in range(current-1,max(-1,current-30),-1):
+            item=self.session.annotation_for(f)
+            if item and item.get("type")=="positive":
+                return (float(item["x"]),float(item["y"]))
+        return None
+
+    def _auto_suggest_current(self):
+        if not self.auto_assist_enabled or self.session is None or self.current_frame is None:return
+        existing=self.session.annotation_for(self.session.current_frame)
+        if existing is not None:return
+        s=self.auto_assist.suggest(self.current_frame,previous_xy=self._previous_positive_xy())
+        if s is None:
+            self.candidate_label.setText("AUTO\nNO CANDIDATE")
+            self.statusBar().showMessage("No automatic candidate — click ball or press N")
+            return
+        self.session.mark_positive(
+            self.session.current_frame,s.x,s.y,
+            box_width_px=s.width,box_height_px=s.height,
+            score=s.confidence,method=s.source
+        )
+        self.session.save()
+        data=self.session.annotation_for(self.session.current_frame)
+        self.image_view.set_annotation(data)
+        self.zoom_widget.show_candidate(self.current_frame,s.x,s.y,s.width,s.height)
+        self.candidate_label.setText(f"AUTO\n{s.confidence*100:.0f}%")
+        self._refresh_stats()
+        self.statusBar().showMessage("AUTO suggestion ready — SPACE accept / click correct / N no ball")
 
     def move_frame(self,delta):
         if self.session is not None:self.load_frame(self.session.current_frame+int(delta))
