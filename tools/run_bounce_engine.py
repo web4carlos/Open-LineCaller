@@ -40,6 +40,8 @@ def main():
     p.add_argument("--max-horizontal-jump", type=float, default=65.0)
     p.add_argument("--peak-tolerance-px", type=float, default=8.0)
     p.add_argument("--min-raw-ratio", type=float, default=0.35)
+    p.add_argument("--min-curvature", type=float, default=0.16)
+    p.add_argument("--min-bounce-score", type=float, default=0.38)
     a = p.parse_args()
 
     out = Path(a.output_dir)
@@ -58,6 +60,8 @@ def main():
         max_horizontal_jump=a.max_horizontal_jump,
         peak_tolerance_px=a.peak_tolerance_px,
         min_raw_ratio=a.min_raw_ratio,
+        min_curvature=a.min_curvature,
+        min_bounce_score=a.min_bounce_score,
     )
 
     samples = list(read_track_csv(a.track_csv))
@@ -79,9 +83,12 @@ def main():
                 "pre_velocity_y",
                 "post_velocity_y",
                 "source",
+                "curvature",
+                "bounce_score",
             ],
         )
         wr.writeheader()
+
         for e in events:
             wr.writerow({
                 "frame": e.frame,
@@ -91,6 +98,8 @@ def main():
                 "pre_velocity_y": round(e.pre_velocity_y, 6),
                 "post_velocity_y": round(e.post_velocity_y, 6),
                 "source": e.source,
+                "curvature": round(e.curvature, 6),
+                "bounce_score": round(e.bounce_score, 6),
             })
 
     cap = cv2.VideoCapture(a.video)
@@ -130,7 +139,7 @@ def main():
             cv2.circle(
                 frame,
                 (bx, by),
-                24,
+                26,
                 (0, 0, 255),
                 4,
                 cv2.LINE_AA,
@@ -139,7 +148,7 @@ def main():
             cv2.putText(
                 frame,
                 f"BOUNCE frame={active.frame}",
-                (max(10, bx - 110), max(35, by - 42)),
+                (max(10, bx - 120), max(35, by - 68)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.8,
                 (0, 0, 255),
@@ -149,10 +158,21 @@ def main():
 
             cv2.putText(
                 frame,
-                f"x={bx} y={by} conf={active.confidence:.2f}",
-                (max(10, bx - 110), max(60, by - 16)),
+                f"score={active.bounce_score:.2f} curv={active.curvature:.2f}",
+                (max(10, bx - 120), max(60, by - 42)),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
+                0.63,
+                (0, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+
+            cv2.putText(
+                frame,
+                f"x={bx} y={by} conf={active.confidence:.2f}",
+                (max(10, bx - 120), max(85, by - 16)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.63,
                 (0, 255, 255),
                 2,
                 cv2.LINE_AA,
@@ -160,10 +180,10 @@ def main():
 
         cv2.putText(
             frame,
-            f"FRAME {frame_no} | BOUNCES={len(events)}",
+            f"FRAME {frame_no} | CURVATURE BOUNCES={len(events)}",
             (25, 42),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.85,
+            0.82,
             (255, 255, 255),
             2,
             cv2.LINE_AA,
@@ -186,13 +206,9 @@ def main():
         f"track_samples={len(samples)}\n"
         f"bounce_events={len(events)}\n"
         f"window={a.window}\n"
-        f"min_pre_speed={a.min_pre_speed}\n"
-        f"min_post_speed={a.min_post_speed}\n"
-        f"refractory_frames={a.refractory_frames}\n"
+        f"min_curvature={a.min_curvature}\n"
+        f"min_bounce_score={a.min_bounce_score}\n"
         f"min_confidence={a.min_confidence}\n"
-        f"max_horizontal_jump={a.max_horizontal_jump}\n"
-        f"peak_tolerance_px={a.peak_tolerance_px}\n"
-        f"min_raw_ratio={a.min_raw_ratio}\n"
         f"events={events_path}\n"
         f"overlay={overlay_path}\n"
     )

@@ -1,6 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from collections import deque
+from math import acos, hypot, pi
 from statistics import mean
 
 from .models import BounceEvent, MotionSample
@@ -8,21 +9,22 @@ from .models import BounceEvent, MotionSample
 
 class BounceEngine:
     """
-    CP-0026.1 validated bounce detector.
+    CP-0026.2 Curvature Bounce Engine.
 
     Image coordinates:
-      - y grows downward.
-      - descending ball -> vy > 0
-      - rising ball    -> vy < 0
-      - bounce should occur near a LOCAL MAXIMUM of image y.
+      y grows downward.
 
-    A candidate must satisfy:
-      1) downward motion before event,
-      2) upward motion after event,
-      3) center is near local y maximum,
-      4) horizontal motion is not wildly discontinuous,
-      5) enough RAW/high-confidence support exists,
-      6) refractory period avoids duplicates.
+    A bounce candidate should combine:
+      - downward motion before center,
+      - upward motion after center,
+      - center near local maximum image-y,
+      - strong local trajectory curvature,
+      - reasonable horizontal continuity,
+      - enough RAW/high-confidence support.
+
+    Curvature here is represented as normalized turning angle:
+      0.0 = straight trajectory
+      1.0 = 180-degree reversal
     """
 
     def __init__(
@@ -36,6 +38,8 @@ class BounceEngine:
         max_horizontal_jump: float = 65.0,
         peak_tolerance_px: float = 8.0,
         min_raw_ratio: float = 0.35,
+        min_curvature: float = 0.16,
+        min_bounce_score: float = 0.38,
     ):
         self.window = max(1, int(window))
         self.min_pre_speed = float(min_pre_speed)
@@ -45,27 +49,21 @@ class BounceEngine:
         self.max_horizontal_jump = float(max_horizontal_jump)
         self.peak_tolerance_px = float(peak_tolerance_px)
         self.min_raw_ratio = float(min_raw_ratio)
+        self.min_curvature = float(min_curvature)
+        self.min_bounce_score = float(min_bounce_score)
 
         self.samples = deque(
-            maxlen=max(16, self.window * 4 + 5)
+            maxlen=max(18, self.window * 4 + 7)
         )
         self.last_bounce_frame = -10000
 
     @staticmethod
     def _xy(sample: MotionSample):
         if sample.raw_x is not None and sample.raw_y is not None:
-            return (
-                float(sample.raw_x),
-                float(sample.raw_y),
-                True,
-            )
+            return float(sample.raw_x), float(sample.raw_y), True
 
         if sample.tracked_x is not None and sample.tracked_y is not None:
-            return (
-                float(sample.tracked_x),
-                float(sample.tracked_y),
-                False,
-            )
+            return float(sample.tracked_x), float(sample.tracked_y), False
 
         return None, None, False
 
@@ -80,10 +78,7 @@ class BounceEngine:
         if dt <= 0:
             return None
 
-        return (
-            (bx - ax) / dt,
-            (by - ay) / dt,
-        )
+        return (bx - ax) / dt, (by - ay) / dt
 
     def _mean_velocity(self, seq):
         vx_values = []
@@ -100,13 +95,61 @@ class BounceEngine:
         if not vy_values:
             return None
 
-        return (
-            mean(vx_values),
-            mean(vy_values),
-        )
+        return mean(vx_values), mean(vy_values)
+
+    def _local_curvature(self, prev_s, center_s, next_s):
+        px, py, _ = self._xy(prev_s)
+        cx, cy, _ = self._xy(center_s)
+        nx, ny, _ = self._xy(next_s)
+
+        if None in (px, py, cx, cy, nx, ny):
+            return 0.0
+
+        # Incoming vector points toward center.
+        v1x = cx - px
+        v1y = cy - py
+
+        # Outgoing vector points away from center.
+        v2x = nx - cx
+        v2y = ny - cy
+
+        mag1 = hypot(v1x, v1y)
+        mag2 = hypot(v2x, v2y)
+
+        if mag1 < 1e-6 or mag2 < 1e-6:
+            return 0.0
+
+        cos_theta = (
+            v1x * v2x + v1y * v2y
+        ) / (mag1 * mag2)
+
+        cos_theta = max(-1.0, min(1.0, cos_theta))
+        angle = acos(cos_theta)
+
+        # Straight movement => angle~0 => curvature 0.
+        # Strong turn => larger angle.
+        return max(0.0, min(1.0, angle / pi))
+
+    def _smoothed_curvature(self, seq, center_idx):
+        values = []
+
+        lo = max(1, center_idx - 1)
+        hi = min(len(seq) - 2, center_idx + 1)
+
+        for i in range(lo, hi + 1):
+            values.append(
+                self._local_curvature(
+                    seq[i - 1],
+                    seq[i],
+                    seq[i + 1],
+                )
+            )
+
+        return mean(values) if values else 0.0
 
     def _is_local_y_peak(self, seq, center_idx):
         _, cy, _ = self._xy(seq[center_idx])
+
         if cy is None:
             return False, 0.0
 
@@ -124,18 +167,14 @@ class BounceEngine:
 
         valid = delta <= self.peak_tolerance_px
 
-        peak_score = max(
+        score = max(
             0.0,
             1.0 - delta / max(1.0, self.peak_tolerance_px),
         )
 
-        return valid, peak_score
+        return valid, score
 
-    def _horizontal_continuity(
-        self,
-        pre_vx: float,
-        post_vx: float,
-    ):
+    def _horizontal_continuity(self, pre_vx, post_vx):
         jump = abs(post_vx - pre_vx)
 
         if jump > self.max_horizontal_jump:
@@ -152,6 +191,7 @@ class BounceEngine:
         self.samples.append(sample)
 
         needed = self.window * 2 + 1
+
         if len(self.samples) < needed:
             return None
 
@@ -170,11 +210,10 @@ class BounceEngine:
         pre_vx, pre_vy = pre
         post_vx, post_vy = post
 
-        # 1) descending before bounce
+        # Vertical reversal remains mandatory.
         if pre_vy < self.min_pre_speed:
             return None
 
-        # 2) rising after bounce
         if post_vy > -self.min_post_speed:
             return None
 
@@ -186,40 +225,48 @@ class BounceEngine:
         ):
             return None
 
-        # 3) bounce near local maximum image-y
         peak_ok, peak_score = self._is_local_y_peak(
             seq,
             center_idx,
         )
+
         if not peak_ok:
             return None
 
-        # 4) horizontal continuity
         horizontal_ok, horizontal_score = (
             self._horizontal_continuity(
                 pre_vx,
                 post_vx,
             )
         )
+
         if not horizontal_ok:
             return None
 
+        curvature = self._smoothed_curvature(
+            seq,
+            center_idx,
+        )
+
+        if curvature < self.min_curvature:
+            return None
+
         x, y, center_is_raw = self._xy(center)
+
         if x is None or y is None:
             return None
 
-        # 5) confidence/raw support
         confidences = [
             max(0.0, min(1.0, float(s.confidence)))
             for s in seq
         ]
         mean_conf = mean(confidences)
 
-        raw_count = 0
-        for s in seq:
-            if s.raw_x is not None and s.raw_y is not None:
-                raw_count += 1
-
+        raw_count = sum(
+            1
+            for s in seq
+            if s.raw_x is not None and s.raw_y is not None
+        )
         raw_ratio = raw_count / len(seq)
 
         if raw_ratio < self.min_raw_ratio:
@@ -233,15 +280,26 @@ class BounceEngine:
             ) / 24.0,
         )
 
-        confidence = (
-            0.30 * mean_conf
-            + 0.25 * raw_ratio
-            + 0.20 * reversal_strength
+        # Main score for CP-0026.2.
+        bounce_score = (
+            0.30 * curvature
+            + 0.25 * reversal_strength
             + 0.15 * peak_score
-            + 0.10 * horizontal_score
+            + 0.15 * mean_conf
+            + 0.10 * raw_ratio
+            + 0.05 * horizontal_score
+        )
+
+        confidence = (
+            0.55 * bounce_score
+            + 0.25 * mean_conf
+            + 0.20 * raw_ratio
         )
 
         if confidence < self.min_confidence:
+            return None
+
+        if bounce_score < self.min_bounce_score:
             return None
 
         self.last_bounce_frame = center.frame
@@ -253,10 +311,7 @@ class BounceEngine:
             confidence=float(confidence),
             pre_velocity_y=float(pre_vy),
             post_velocity_y=float(post_vy),
-            source=(
-                "RAW"
-                if center_is_raw
-                else "TRACKED"
-            ),
+            source="RAW" if center_is_raw else "TRACKED",
+            curvature=float(curvature),
+            bounce_score=float(bounce_score),
         )
-

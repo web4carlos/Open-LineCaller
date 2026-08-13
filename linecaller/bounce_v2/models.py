@@ -20,3 +20,5 @@ class BounceEvent:
     pre_velocity_y: float
     post_velocity_y: float
     source: str
+    curvature: float = 0.0
+    bounce_score: float = 0.0
