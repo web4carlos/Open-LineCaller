@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 import cv2
@@ -82,11 +82,25 @@ class CourtGeometry:
             "NEAR_BASELINE": l - y,
         }
 
-        nearest_line = min(
-            distances,
-            key=lambda k: abs(distances[k]),
-        )
-        signed = float(distances[nearest_line])
+        violated = {
+            name: value
+            for name, value in distances.items()
+            if value < 0.0
+        }
+
+        if violated:
+            nearest_line = min(
+                violated,
+                key=lambda k: abs(violated[k]),
+            )
+            signed = float(violated[nearest_line])
+        else:
+            nearest_line = min(
+                distances,
+                key=lambda k: abs(distances[k]),
+            )
+            signed = float(distances[nearest_line])
+
         absolute = abs(signed)
 
         if absolute <= self.near_line_threshold_ft:
@@ -107,3 +121,4 @@ class CourtGeometry:
             absolute_distance_ft=absolute,
             geometry_state=state,
         )
+
