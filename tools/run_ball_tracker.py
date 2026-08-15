@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import csv
@@ -20,6 +20,7 @@ def parse_args():
     p.add_argument("--video", required=True)
     p.add_argument("--output-dir", required=True)
     p.add_argument("--max-frames", type=int, default=600)
+    p.add_argument("--start-seconds", type=float, default=0.0)
     p.add_argument("--imgsz", type=int, default=640)
     p.add_argument("--conf", type=float, default=0.10)
     p.add_argument("--max-gap", type=int, default=4)
@@ -65,6 +66,12 @@ def main():
         raise SystemExit(f"Cannot open video: {a.video}")
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+
+    if a.start_seconds > 0:
+        cap.set(cv2.CAP_PROP_POS_MSEC, a.start_seconds * 1000.0)
+
+    start_frame = int(round(a.start_seconds * fps))
+
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
@@ -108,7 +115,7 @@ def main():
             if best is not None:
                 conf, x, y, x1, y1, x2, y2 = best
                 detection = DetectionPoint(
-                    frame=frames,
+                    frame=start_frame + frames,
                     x=x,
                     y=y,
                     confidence=conf,
@@ -124,7 +131,7 @@ def main():
                 )
 
             point = tracker.update(
-                frames,
+                start_frame + frames,
                 detection,
             )
 
@@ -198,7 +205,7 @@ def main():
             )
 
             rows.append({
-                "frame": frames,
+                "frame": start_frame + frames,
                 "raw_x": "" if point.raw_x is None else round(point.raw_x, 3),
                 "raw_y": "" if point.raw_y is None else round(point.raw_y, 3),
                 "tracked_x": "" if point.tracked_x is None else round(point.tracked_x, 3),
@@ -252,6 +259,8 @@ def main():
 
     summary = (
         f"frames={frames}\n"
+        f"start_seconds={a.start_seconds}\n"
+        f"start_frame={start_frame}\n"
         f"yolo_frames={yolo_frames}\n"
         f"yolo_coverage={yolo_coverage:.3%}\n"
         f"tracked_frames={tracked_frames}\n"
@@ -270,3 +279,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
