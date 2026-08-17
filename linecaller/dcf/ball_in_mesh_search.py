@@ -700,6 +700,7 @@ class BallInMeshSearcher:
         indices: Iterable[CellIndex],
         *,
         coarse_candidates_tested: int = 0,
+        min_score: float | None = None,
     ) -> BallInMeshHit:
         identity = self._ensure_locked(ball_reference)
         similarity = identity.pixel_profile.similarity_map(frame)
@@ -718,7 +719,11 @@ class BallInMeshSearcher:
             if best is None or detail[0] > best[0][0]:
                 best = (detail, projected)
 
-        if best is None or best[0][0] < self.config.min_score:
+        threshold = self.config.min_score if min_score is None else float(min_score)
+        if not 0.0 <= threshold <= 1.0:
+            raise ValueError("min_score must be in [0,1]")
+
+        if best is None or best[0][0] < threshold:
             return BallInMeshHit(
                 found=False,
                 score=0.0 if best is None else float(best[0][0]),
