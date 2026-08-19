@@ -200,17 +200,23 @@ class ExternalGridCalibrator:
     @staticmethod
     def _region(cx: float, cy: float, court_x: float, court_y: float) -> str:
         left, right = cx < 0.0, cx > court_x
-        near, far = cy < 0.0, cy > court_y
+
+        # Court-space convention used by this calibrator:
+        #   Y=0       -> FAR baseline
+        #   Y=court_y -> NEAR baseline
+        # Therefore negative Y is OUT_FAR and Y beyond court_y is OUT_NEAR.
+        far, near = cy < 0.0, cy > court_y
+
         if (left or right) and (near or far):
             return "OUT_CORNER"
         if left:
             return "OUT_LEFT"
         if right:
             return "OUT_RIGHT"
-        if near:
-            return "OUT_NEAR"
         if far:
             return "OUT_FAR"
+        if near:
+            return "OUT_NEAR"
         raise ValueError("internal cell is not part of the external grid")
 
     def build(self, *, background_image: str) -> ExternalGridCalibration:
