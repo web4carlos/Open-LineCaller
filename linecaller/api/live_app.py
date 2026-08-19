@@ -194,7 +194,7 @@ class LiveRuntimeRegistry:
 registry = LiveRuntimeRegistry()
 app = FastAPI(
     title="Open LineCaller Live API",
-    version="CP-0036.2",
+    version="CP-0036.2.1",
     description="Official outside-grid live frame bridge.",
 )
 
@@ -249,6 +249,7 @@ def health() -> dict[str, Any]:
         "ok": True,
         "service": "Open LineCaller Live API",
         "version": "CP-0036.2",
+        "feature_version": "CP-0036.2.1",
         "configured": registry.runtime is not None,
     }
 

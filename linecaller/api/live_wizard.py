@@ -10,6 +10,10 @@ import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from PIL import Image
 
+from linecaller.api.boundary_calibration import (
+    infer_court_corners_from_boundary_lines,
+    parse_boundary_lines_json,
+)
 from linecaller.dcf.external_grid_frame_loop import (
     CalibrationCoverage,
     ExternalGridCalibrator,
@@ -26,6 +30,8 @@ class WizardState:
     coverage: str | None = None
     external_cells: int = 0
     image_points: tuple[tuple[float, float], ...] = ()
+    calibration_method: str | None = None
+    offscreen_corners: int = 0
 
     def reset(self) -> None:
         self.calibration_path = None
@@ -35,6 +41,8 @@ class WizardState:
         self.coverage = None
         self.external_cells = 0
         self.image_points = ()
+        self.calibration_method = None
+        self.offscreen_corners = 0
 
 
 wizard_state = WizardState()
@@ -101,6 +109,8 @@ def _summary_dict(registry: Any) -> dict[str, Any]:
             "coverage": wizard_state.coverage,
             "external_cells": wizard_state.external_cells,
             "image_points": [list(p) for p in wizard_state.image_points],
+            "calibration_method": wizard_state.calibration_method,
+            "offscreen_corners": wizard_state.offscreen_corners,
         },
     }
 
@@ -134,7 +144,8 @@ def register_wizard_routes(app: Any, registry: Any, runtime_upload_dir: Path) ->
     @router.post("/calibrate")
     def calibrate(
         background: UploadFile = File(...),
-        image_points: str = Form(...),
+        image_points: str | None = Form(None),
+        boundary_lines: str | None = Form(None),
         coverage: str = Form("FULL_COURT"),
         margin_bu: float = Form(10.0),
     ) -> dict[str, Any]:
@@ -142,7 +153,22 @@ def register_wizard_routes(app: Any, registry: Any, runtime_upload_dir: Path) ->
             bgr, rgb_image = _decode_upload(background, "background")
             height, width = bgr.shape[:2]
             size = (int(width), int(height))
-            points = _parse_image_points(image_points, size)
+
+            if boundary_lines:
+                parsed_lines = parse_boundary_lines_json(boundary_lines, size)
+                inference = infer_court_corners_from_boundary_lines(parsed_lines, size)
+                points = inference.image_points
+                calibration_method = "BOUNDARY_LINES"
+                offscreen_corners = inference.offscreen_corners
+            elif image_points:
+                points = _parse_image_points(image_points, size)
+                calibration_method = "VISIBLE_CORNERS"
+                offscreen_corners = 0
+            else:
+                raise ValueError(
+                    "Provide image_points or boundary_lines calibration evidence"
+                )
+
             mode = CalibrationCoverage.parse(coverage)
 
             if float(margin_bu) <= 0.0:
@@ -177,6 +203,8 @@ def register_wizard_routes(app: Any, registry: Any, runtime_upload_dir: Path) ->
             wizard_state.coverage = mode.value
             wizard_state.external_cells = len(calibration.cells)
             wizard_state.image_points = points
+            wizard_state.calibration_method = calibration_method
+            wizard_state.offscreen_corners = offscreen_corners
 
             # Court geometry changed: old runtime must not continue.
             registry.runtime = None
@@ -189,6 +217,8 @@ def register_wizard_routes(app: Any, registry: Any, runtime_upload_dir: Path) ->
                 "image_size": list(size),
                 "external_cells": len(calibration.cells),
                 "image_points": [list(p) for p in points],
+                "calibration_method": calibration_method,
+                "offscreen_corners": offscreen_corners,
                 "next": "SELECT_BALL",
             }
         except (ValueError, OSError) as exc:

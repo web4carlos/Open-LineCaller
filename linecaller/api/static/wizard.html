@@ -183,10 +183,21 @@
       <button id="captureCourt" disabled>Capture Clean Court</button>
     </div>
 
+
     <div id="step3" class="step">
-      <h2><span>3. Four outside corners</span><span id="s3">WAIT</span></h2>
-      <p>Click the OUTER boundary corners in this exact order:</p>
-      <div class="point-list">
+      <h2><span>3. Court boundaries</span><span id="s3">WAIT</span></h2>
+      <p>Recommended: mark two visible points on each OUTER boundary line. Corners may be outside the video.</p>
+      <div class="source-tabs">
+        <button id="useBoundaryLines" class="active">Boundary Lines</button>
+        <button id="useVisibleCorners">4 Visible Corners</button>
+      </div>
+      <div id="boundaryInstructions" class="point-list">
+        1-2. NEAR baseline<br>
+        3-4. RIGHT sideline<br>
+        5-6. FAR baseline<br>
+        7-8. LEFT sideline
+      </div>
+      <div id="cornerInstructions" class="point-list" style="display:none">
         1. NEAR-LEFT<br>
         2. NEAR-RIGHT<br>
         3. FAR-RIGHT<br>
@@ -263,8 +274,8 @@
         <div id="timeLabel" class="transport-time">00:00.000 / 00:00.000</div>
       </div>
       <div class="three">
-        <button id="stepBack" disabled>Ã¢â€”â‚¬ Step Frame</button>
-        <button id="stepForward" disabled>Step Frame Ã¢â€“Â¶</button>
+        <button id="stepBack" disabled>Step Frame Back</button>
+        <button id="stepForward" disabled>Step Frame Forward</button>
         <button id="jumpStart" disabled>Go to Start</button>
       </div>
     </div>
@@ -302,6 +313,7 @@
   let cleanBlob = null;
   let frozenBitmap = null;
   let points = [];
+  let calibrationMode = 'LINES';
   let selectedBall = null;
   let configured = false;
   let analyzing = false;
@@ -310,6 +322,30 @@
   let renderRaf = null;
 
   const pointNames = ['NEAR-LEFT','NEAR-RIGHT','FAR-RIGHT','FAR-LEFT'];
+  const lineNames = ['NEAR baseline','RIGHT sideline','FAR baseline','LEFT sideline'];
+
+  function requiredCalibrationClicks() {
+    return calibrationMode === 'LINES' ? 8 : 4;
+  }
+
+  function boundaryLinePayload() {
+    if (points.length !== 8) return null;
+    return {
+      NEAR: [points[0], points[1]],
+      RIGHT: [points[2], points[3]],
+      FAR: [points[4], points[5]],
+      LEFT: [points[6], points[7]]
+    };
+  }
+
+  function nextCalibrationInstruction() {
+    if (calibrationMode === 'CORNERS') {
+      return `Click corner ${points.length + 1}: ${pointNames[points.length]}.`;
+    }
+    const lineIndex = Math.floor(points.length / 2);
+    const clickInLine = (points.length % 2) + 1;
+    return `Click point ${clickInLine} on ${lineNames[lineIndex]}.`;
+  }
 
   function setBadge(text, cls='') {
     $('badge').textContent = text;
@@ -528,16 +564,45 @@
     frozenBitmap = await createImageBitmap(cleanBlob);
     points = [];
     stage = 'CORNERS';
+    calibrationMode = $('useBoundaryLines').classList.contains('active') ? 'LINES' : 'CORNERS';
     redrawFrozen();
     stepState(2,'DONE');
     stepState(3,'NOW');
     $('undoPoint').disabled = true;
     $('buildGrid').disabled = true;
-    say('Click corner 1: NEAR-LEFT.');
+    say(nextCalibrationInstruction());
+  }
+
+  function drawInfiniteCanvasLine(p0, p1, color) {
+    const dx = p1[0] - p0[0];
+    const dy = p1[1] - p0[1];
+    const scale = 8 * Math.max(canvas.width, canvas.height);
+    ctx.beginPath();
+    ctx.moveTo(p0[0] - dx * scale, p0[1] - dy * scale);
+    ctx.lineTo(p0[0] + dx * scale, p0[1] + dy * scale);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
   }
 
   function redrawFrozen() {
     if (frozenBitmap) ctx.drawImage(frozenBitmap, 0, 0, canvas.width, canvas.height);
+
+    if (calibrationMode === 'LINES') {
+      const colors = ['#ffcf5a','#6bc6ff','#f58cff','#82e29a'];
+      for (let i = 0; i + 1 < points.length; i += 2) {
+        drawInfiniteCanvasLine(points[i], points[i+1], colors[Math.floor(i/2)]);
+      }
+    } else if (points.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(points[0][0],points[0][1]);
+      for (let i=1;i<points.length;i++) ctx.lineTo(points[i][0],points[i][1]);
+      if (points.length === 4) ctx.closePath();
+      ctx.strokeStyle = '#64b5ff';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+
     points.forEach((p,i) => {
       ctx.beginPath();
       ctx.arc(p[0],p[1],7,0,Math.PI*2);
@@ -550,15 +615,6 @@
       ctx.font = 'bold 14px sans-serif';
       ctx.fillText(String(i+1),p[0]+10,p[1]-10);
     });
-    if (points.length > 1) {
-      ctx.beginPath();
-      ctx.moveTo(points[0][0],points[0][1]);
-      for (let i=1;i<points.length;i++) ctx.lineTo(points[i][0],points[i][1]);
-      if (points.length === 4) ctx.closePath();
-      ctx.strokeStyle = '#64b5ff';
-      ctx.lineWidth = 3;
-      ctx.stroke();
-    }
   }
 
   function canvasPoint(ev) {
@@ -571,15 +627,18 @@
 
   canvas.addEventListener('click', async ev => {
     if (stage === 'CORNERS') {
-      if (points.length >= 4) return;
+      const required = requiredCalibrationClicks();
+      if (points.length >= required) return;
       points.push(canvasPoint(ev));
       redrawFrozen();
       $('undoPoint').disabled = points.length === 0;
-      $('buildGrid').disabled = points.length !== 4;
-      if (points.length < 4) {
-        say(`Click corner ${points.length+1}: ${pointNames[points.length]}.`);
+      $('buildGrid').disabled = points.length !== required;
+      if (points.length < required) {
+        say(nextCalibrationInstruction());
       } else {
-        say('Four corners selected. Build the outside-only grid.');
+        say(calibrationMode === 'LINES'
+          ? 'Four boundary lines captured. LineCaller will infer all court corners, including off-screen intersections.'
+          : 'Four visible corners selected. Build the outside-only grid.');
       }
       return;
     }
@@ -603,16 +662,20 @@
     points.pop();
     redrawFrozen();
     $('undoPoint').disabled = points.length === 0;
-    $('buildGrid').disabled = points.length !== 4;
-    say(`Click corner ${points.length+1}: ${pointNames[points.length]}.`);
+    $('buildGrid').disabled = points.length !== requiredCalibrationClicks();
+    say(nextCalibrationInstruction());
   }
 
   async function buildGrid() {
-    if (!cleanBlob || points.length !== 4) return;
+    if (!cleanBlob || points.length !== requiredCalibrationClicks()) return;
     $('buildGrid').disabled = true;
     const fd = new FormData();
     fd.append('background',cleanBlob,'clean_court.png');
-    fd.append('image_points',JSON.stringify(points));
+    if (calibrationMode === 'LINES') {
+      fd.append('boundary_lines', JSON.stringify(boundaryLinePayload()));
+    } else {
+      fd.append('image_points',JSON.stringify(points));
+    }
     fd.append('coverage',$('coverage').value);
     fd.append('margin_bu',$('marginBu').value);
 
@@ -626,8 +689,12 @@
       stepState(3,'DONE');
       stepState(4,'NOW');
       $('selectBallFrame').disabled = false;
+      const inferred = Number(d.offscreen_corners || 0);
+      const inferenceNote = inferred > 0
+        ? ` ${inferred} court corner(s) were inferred outside the visible frame.`
+        : '';
       if (sourceMode === 'VIDEO') {
-        say(`Outside grid created: ${d.external_cells} external cells. Seek to a clear ball frame, then click Select Ball From Current Frame.`);
+        say(`Outside grid created: ${d.external_cells} external cells.${inferenceNote} Seek to a clear ball frame, then click Select Ball From Current Frame.`);
       } else {
         say(`Outside grid created: ${d.external_cells} external cells. Show the ball, then arm ball selection.`);
       }
@@ -898,6 +965,25 @@
     canvas.style.display='block';
     await seekTo(video.currentTime + direction*frameStepSeconds());
   }
+
+  $('useBoundaryLines').addEventListener('click',()=>{
+    if (stage === 'CORNERS' && points.length) return;
+    calibrationMode='LINES';
+    $('useBoundaryLines').classList.add('active');
+    $('useVisibleCorners').classList.remove('active');
+    $('boundaryInstructions').style.display='block';
+    $('cornerInstructions').style.display='none';
+    if (stage === 'CORNERS') say(nextCalibrationInstruction());
+  });
+  $('useVisibleCorners').addEventListener('click',()=>{
+    if (stage === 'CORNERS' && points.length) return;
+    calibrationMode='CORNERS';
+    $('useVisibleCorners').classList.add('active');
+    $('useBoundaryLines').classList.remove('active');
+    $('boundaryInstructions').style.display='none';
+    $('cornerInstructions').style.display='block';
+    if (stage === 'CORNERS') say(nextCalibrationInstruction());
+  });
 
   $('useVideo').addEventListener('click',()=>setSourceMode('VIDEO'));
   $('useCamera').addEventListener('click',()=>setSourceMode('CAMERA'));
