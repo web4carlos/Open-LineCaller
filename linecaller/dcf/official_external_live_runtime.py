@@ -317,8 +317,16 @@ class OfficialExternalLiveRuntime:
             duration = max(1e-6, glow.expires_at_s - glow.started_at_s)
             age = max(0.0, float(now_s) - glow.started_at_s)
             remaining = max(0.0, glow.expires_at_s - float(now_s))
-            fade_in = min(1.0, age / max(1e-6, min(0.18, 0.25 * duration)))
-            fade_out = min(1.0, remaining / max(1e-6, min(0.35, 0.30 * duration)))
+            # A confirmed OUT must illuminate immediately on its confirmation
+            # frame.  The previous envelope started at exactly zero because
+            # age == 0 for a newly-created glow, which made the OUT event valid
+            # but visually invisible for that frame.
+            fade_in_window = max(1e-6, min(0.18, 0.25 * duration))
+            fade_in = min(1.0, 0.35 + 0.65 * (age / fade_in_window))
+            fade_out = min(
+                1.0,
+                remaining / max(1e-6, min(0.35, 0.30 * duration)),
+            )
             envelope = min(fade_in, fade_out, 1.0)
             strength = self.config.glow_strength * envelope
             if strength > 0.0:

@@ -170,9 +170,16 @@ class TrajectoryDiscontinuityDetector:
         nb = b.speed_bu_s
         if na <= 1e-12 or nb <= 1e-12:
             return 0.0
+
+        # atan2(|a x b|, a . b) is numerically stable for nearly-parallel
+        # vectors.  acos(dot/(|a||b|)) loses precision close to cosine=1 and
+        # can turn machine-roundoff into a false micro-angle.
         dot = a.vx*b.vx + a.vy*b.vy + a.vz*b.vz
-        cosine = max(-1.0, min(1.0, dot / (na * nb)))
-        return math.degrees(math.acos(cosine))
+        cx = a.vy*b.vz - a.vz*b.vy
+        cy = a.vz*b.vx - a.vx*b.vz
+        cz = a.vx*b.vy - a.vy*b.vx
+        cross_norm = math.sqrt(cx*cx + cy*cy + cz*cz)
+        return math.degrees(math.atan2(cross_norm, dot))
 
     def _windows_are_contiguous(self, observations: Sequence[TimedPoint3D]) -> bool:
         return all(

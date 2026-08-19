@@ -10,3 +10,4 @@ _packs/
 _cp_backups/
 *.bak
 node_modules/
+.linecaller_runtime/
