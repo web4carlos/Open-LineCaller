@@ -194,7 +194,7 @@ class LiveRuntimeRegistry:
 registry = LiveRuntimeRegistry()
 app = FastAPI(
     title="Open LineCaller Live API",
-    version="CP-0036",
+    version="CP-0036.1",
     description="Official outside-grid live frame bridge.",
 )
 
@@ -217,13 +217,30 @@ def _save_upload(upload: UploadFile, path: Path) -> Path:
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
+    path = STATIC_DIR / "wizard.html"
+    if not path.exists():
+        return HTMLResponse(
+            "<h1>Open LineCaller</h1><p>Live wizard missing.</p>",
+            status_code=500,
+        )
+    return HTMLResponse(
+        path.read_text(encoding="utf-8"),
+        media_type="text/html; charset=utf-8",
+    )
+
+
+@app.get("/engineering", response_class=HTMLResponse)
+def engineering_console() -> HTMLResponse:
     path = STATIC_DIR / "index.html"
     if not path.exists():
         return HTMLResponse(
-            "<h1>Open LineCaller</h1><p>Live console missing.</p>",
+            "<h1>Open LineCaller</h1><p>Engineering console missing.</p>",
             status_code=500,
         )
-    return HTMLResponse(path.read_text(encoding="utf-8"))
+    return HTMLResponse(
+        path.read_text(encoding="utf-8"),
+        media_type="text/html; charset=utf-8",
+    )
 
 
 @app.get("/health")
@@ -231,7 +248,7 @@ def health() -> dict[str, Any]:
     return {
         "ok": True,
         "service": "Open LineCaller Live API",
-        "version": "CP-0036",
+        "version": "CP-0036.1",
         "configured": registry.runtime is not None,
     }
 
@@ -414,3 +431,8 @@ async def process_frame(
             payload["rendered_jpeg_base64"] = None
 
     return payload
+
+# CP-0036.1 is registered after the CP-0036 routes and shared registry exist.
+from linecaller.api.live_wizard import register_wizard_routes
+
+register_wizard_routes(app, registry, RUNTIME_UPLOAD_DIR)

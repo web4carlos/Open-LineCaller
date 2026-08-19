@@ -1,6 +1,15 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+import sys
+
+# Running a script inside tools/ makes Python use tools/ as sys.path[0].
+# Insert the repository root so "linecaller" is importable from the documented
+# PowerShell command: python tools\run_live_api.py
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import uvicorn
 

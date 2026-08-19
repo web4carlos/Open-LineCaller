@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Open LineCaller - Live Calibration Wizard</title>
+  <style>
+    :root {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      color-scheme: dark;
+      background:#080d12;
+      color:#edf3fa;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; background:#080d12; }
+    header {
+      position:sticky; top:0; z-index:20;
+      display:flex; align-items:center; justify-content:space-between;
+      gap:16px; padding:15px 22px;
+      border-bottom:1px solid #213040; background:#0e151d;
+    }
+    h1 { font-size:18px; margin:0; }
+    .top-actions { display:flex; gap:9px; align-items:center; }
+    .badge {
+      border:1px solid #34475b; border-radius:999px;
+      padding:6px 11px; font-size:11px; font-weight:800;
+    }
+    .safe { color:#9be9b5; border-color:#347b4d; }
+    .warn { color:#ffd48b; border-color:#8b6830; }
+    .bad { color:#ffaaaa; border-color:#874242; }
+    a { color:#9fc9f4; font-size:12px; }
+    main {
+      width:min(1320px,96vw); margin:18px auto 40px;
+      display:grid; grid-template-columns:390px 1fr; gap:18px;
+    }
+    .panel {
+      background:#101821; border:1px solid #213040; border-radius:15px;
+      padding:16px;
+    }
+    .step {
+      border:1px solid #26384a; border-radius:12px;
+      padding:13px; margin-bottom:11px; background:#0c131b;
+    }
+    .step.active { border-color:#3e78ae; box-shadow:0 0 0 1px #3e78ae inset; }
+    .step.done { border-color:#315f42; }
+    .step h2 {
+      margin:0 0 7px; font-size:14px;
+      display:flex; align-items:center; justify-content:space-between;
+    }
+    .step p { color:#8fa3b6; font-size:11px; line-height:1.5; margin:7px 0; }
+    label { display:block; font-size:11px; color:#99acbf; margin:8px 0 4px; }
+    select,input,button {
+      width:100%; border:1px solid #31465c; border-radius:9px;
+      background:#0b1219; color:#edf3fa; padding:9px 10px;
+    }
+    button { cursor:pointer; font-weight:750; margin-top:7px; }
+    button.primary { background:#235f99; border-color:#347cbf; }
+    button.good { background:#245d39; border-color:#34774b; }
+    button.danger { background:#522b31; border-color:#754047; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .zones { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:6px; }
+    .zone {
+      display:flex; align-items:center; gap:6px;
+      padding:7px; border:1px solid #25384a; border-radius:8px;
+      font-size:10px; color:#b8c7d7; margin:0;
+    }
+    .zone input { width:auto; margin:0; }
+    .stage {
+      position:relative; min-height:560px;
+      display:flex; flex-direction:column;
+    }
+    .video-wrap {
+      position:relative; width:100%;
+      background:#020406; border:1px solid #26394b; border-radius:12px;
+      overflow:hidden; aspect-ratio:16/9;
+    }
+    video,canvas,#processed {
+      position:absolute; inset:0; width:100%; height:100%; object-fit:contain;
+    }
+    canvas { cursor:crosshair; }
+    #processed { display:none; }
+    .instruction {
+      margin-top:10px; padding:11px 12px; min-height:44px;
+      border:1px solid #2a3d50; background:#0b1219; border-radius:10px;
+      font-size:13px;
+    }
+    .stats {
+      display:grid; grid-template-columns:repeat(5,1fr);
+      gap:7px; margin-top:10px;
+    }
+    .stat {
+      background:#0a1118; border:1px solid #213346;
+      border-radius:9px; padding:8px;
+    }
+    .stat span { display:block; color:#8095a8; font-size:9px; text-transform:uppercase; }
+    .stat b { display:block; font-size:15px; margin-top:3px; }
+    .call {
+      font-size:44px; font-weight:900; letter-spacing:2px;
+      text-align:center; padding:12px; min-height:78px;
+      color:#7f90a0;
+    }
+    .call.out { color:#ffd16c; text-shadow:0 0 18px rgba(255,196,65,.4); }
+    .point-list { font-size:10px; color:#9cb0c4; line-height:1.5; margin-top:7px; }
+    .hidden { display:none !important; }
+    @media(max-width:900px) {
+      main { grid-template-columns:1fr; }
+      .stats { grid-template-columns:repeat(2,1fr); }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Open LineCaller - Live Calibration Wizard</h1>
+  <div class="top-actions">
+    <a href="/engineering">Engineering console</a>
+    <div id="badge" class="badge">SETUP</div>
+  </div>
+</header>
+
+<main>
+  <section class="panel">
+    <div id="step1" class="step active">
+      <h2><span>1. Camera</span><span id="s1">WAIT</span></h2>
+      <p>Open the installed camera. Keep the phone/camera in its real match position.</p>
+      <button id="openCamera" class="primary">Open Camera</button>
+    </div>
+
+    <div id="step2" class="step">
+      <h2><span>2. Clean court</span><span id="s2">WAIT</span></h2>
+      <p>Remove the ball and people from the outside landing area, then freeze one clean frame.</p>
+      <div class="row">
+        <select id="coverage">
+          <option value="FULL_COURT" selected>Full court</option>
+          <option value="HALF_COURT">Half court</option>
+        </select>
+        <input id="marginBu" type="number" value="10" min="2" max="20" step="1">
+      </div>
+      <button id="captureCourt" disabled>Capture Clean Court</button>
+    </div>
+
+    <div id="step3" class="step">
+      <h2><span>3. Four outside corners</span><span id="s3">WAIT</span></h2>
+      <p>Click the OUTER boundary corners in this exact order:</p>
+      <div class="point-list">
+        1. NEAR-LEFT<br>
+        2. NEAR-RIGHT<br>
+        3. FAR-RIGHT<br>
+        4. FAR-LEFT
+      </div>
+      <button id="undoPoint" disabled>Undo Last Point</button>
+      <button id="buildGrid" class="primary" disabled>Build Outside Grid</button>
+    </div>
+
+    <div id="step4" class="step">
+      <h2><span>4. Select ball</span><span id="s4">WAIT</span></h2>
+      <p>Put the match ball in view. Click its center. This locks its current color profile.</p>
+      <label>Ball crop size (pixels)</label>
+      <input id="cropSize" type="number" value="36" min="16" max="96" step="2">
+      <button id="resumeForBall" disabled>Resume Camera for Ball</button>
+    </div>
+
+    <div id="step5" class="step">
+      <h2><span>5. Camera ownership</span><span id="s5">WAIT</span></h2>
+      <div class="row">
+        <div>
+          <label>Camera ID</label>
+          <input id="cameraId" value="net-camera-01">
+        </div>
+        <div>
+          <label>Mount</label>
+          <select id="mount">
+            <option>NET_LEFT</option>
+            <option>NET_RIGHT</option>
+            <option selected>NET_CENTER</option>
+            <option>OTHER</option>
+          </select>
+        </div>
+      </div>
+      <label>Receiving side</label>
+      <select id="side">
+        <option selected>FAR</option>
+        <option>NEAR</option>
+      </select>
+      <label>Owned outside zones</label>
+      <div class="zones">
+        <label class="zone"><input type="checkbox" value="FAR_LEFT" checked> FAR_LEFT</label>
+        <label class="zone"><input type="checkbox" value="FAR_BASELINE" checked> FAR_BASELINE</label>
+        <label class="zone"><input type="checkbox" value="FAR_RIGHT" checked> FAR_RIGHT</label>
+        <label class="zone"><input type="checkbox" value="NEAR_LEFT" checked> NEAR_LEFT</label>
+        <label class="zone"><input type="checkbox" value="NEAR_BASELINE" checked> NEAR_BASELINE</label>
+        <label class="zone"><input type="checkbox" value="NEAR_RIGHT" checked> NEAR_RIGHT</label>
+      </div>
+      <label>Outside depth (Ball Units)</label>
+      <input id="depthBu" type="number" value="6" min="1" max="20">
+    </div>
+
+    <div id="step6" class="step">
+      <h2><span>6. Match</span><span id="s6">WAIT</span></h2>
+      <button id="startLineCaller" class="good" disabled>Start LineCaller</button>
+      <button id="changeBall" disabled>Change Ball</button>
+      <button id="resetWizard" class="danger">Reset Calibration</button>
+    </div>
+  </section>
+
+  <section class="panel stage">
+    <div class="video-wrap">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="canvas"></canvas>
+      <img id="processed" alt="LineCaller processed output">
+    </div>
+
+    <div id="instruction" class="instruction">
+      Open the camera to begin.
+    </div>
+
+    <div class="stats">
+      <div class="stat"><span>Pose</span><b id="pose">-</b></div>
+      <div class="stat"><span>Owned cells</span><b id="cells">0</b></div>
+      <div class="stat"><span>Z0</span><b id="z0">0</b></div>
+      <div class="stat"><span>Frame</span><b id="frame">0</b></div>
+      <div class="stat"><span>Grid cells</span><b id="gridCells">0</b></div>
+    </div>
+
+    <div id="call" class="call">READY FOR SETUP</div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const video = $('video');
+  const canvas = $('canvas');
+  const ctx = canvas.getContext('2d');
+  const processed = $('processed');
+
+  let stream = null;
+  let stage = 'CAMERA';
+  let cleanBlob = null;
+  let points = [];
+  let selectedBall = null;
+  let configured = false;
+  let live = false;
+  let inflight = false;
+  let frameNo = 0;
+  let loopTimer = null;
+
+  const pointNames = ['NEAR-LEFT','NEAR-RIGHT','FAR-RIGHT','FAR-LEFT'];
+
+  function setBadge(text, cls='') {
+    $('badge').textContent = text;
+    $('badge').className = 'badge ' + cls;
+  }
+  function say(text) { $('instruction').textContent = text; }
+  function stepState(n, state) {
+    $('s'+n).textContent = state;
+    const box = $('step'+n);
+    box.classList.toggle('done', state === 'DONE' || state === 'READY');
+    box.classList.toggle('active', state === 'NOW');
+  }
+  function zones() {
+    return [...document.querySelectorAll('.zone input:checked')].map(x => x.value);
+  }
+  function resizeCanvas() {
+    const w = video.videoWidth || 1280;
+    const h = video.videoHeight || 720;
+    canvas.width = w;
+    canvas.height = h;
+  }
+  function drawVideo() {
+    if (!video.videoWidth) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  }
+  function redrawFrozen(img=null) {
+    if (img) ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    points.forEach((p,i) => {
+      ctx.beginPath();
+      ctx.arc(p[0],p[1],7,0,Math.PI*2);
+      ctx.fillStyle = '#ffcf5a';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#111';
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillText(String(i+1),p[0]+10,p[1]-10);
+    });
+    if (points.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(points[0][0],points[0][1]);
+      for (let i=1;i<points.length;i++) ctx.lineTo(points[i][0],points[i][1]);
+      if (points.length === 4) ctx.closePath();
+      ctx.strokeStyle = '#64b5ff';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+  }
+  function canvasBlob(type='image/jpeg', quality=.92) {
+    return new Promise(resolve => canvas.toBlob(resolve,type,quality));
+  }
+  async function openCamera() {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video:{width:{ideal:1280},height:{ideal:720},facingMode:{ideal:'environment'}},
+        audio:false
+      });
+      video.srcObject = stream;
+      await video.play();
+      resizeCanvas();
+      stage = 'CLEAN';
+      stepState(1,'DONE'); stepState(2,'NOW');
+      $('captureCourt').disabled = false;
+      setBadge('CAMERA READY','safe');
+      say('Camera ready. Make the outside court area clean, then capture.');
+    } catch(e) {
+      setBadge('CAMERA ERROR','bad');
+      say(e.message || String(e));
+    }
+  }
+  async function captureCourt() {
+    drawVideo();
+    cleanBlob = await canvasBlob('image/png',1);
+    if (!cleanBlob) return;
+    points = [];
+    stage = 'CORNERS';
+    stepState(2,'DONE'); stepState(3,'NOW');
+    $('undoPoint').disabled = true;
+    $('buildGrid').disabled = true;
+    say('Click corner 1: NEAR-LEFT.');
+  }
+  function canvasPoint(ev) {
+    const r = canvas.getBoundingClientRect();
+    return [
+      (ev.clientX-r.left) * canvas.width/r.width,
+      (ev.clientY-r.top) * canvas.height/r.height
+    ];
+  }
+  canvas.addEventListener('click', async ev => {
+    if (stage === 'CORNERS') {
+      if (points.length >= 4) return;
+      points.push(canvasPoint(ev));
+      const snapshot = new Image();
+      snapshot.onload = () => redrawFrozen(snapshot);
+      snapshot.src = URL.createObjectURL(cleanBlob);
+      $('undoPoint').disabled = points.length === 0;
+      $('buildGrid').disabled = points.length !== 4;
+      if (points.length < 4) {
+        say(`Click corner ${points.length+1}: ${pointNames[points.length]}.`);
+      } else {
+        say('Four corners selected. Build the outside-only grid.');
+      }
+      return;
+    }
+
+    if (stage === 'BALL') {
+      selectedBall = canvasPoint(ev);
+      const p = selectedBall;
+      ctx.beginPath(); ctx.arc(p[0],p[1],12,0,Math.PI*2);
+      ctx.strokeStyle='#ffcf5a'; ctx.lineWidth=4; ctx.stroke();
+      say('Ball selected. Creating ball profile and arming LineCaller...');
+      await finalizeBall();
+    }
+  });
+
+  async function undoPoint() {
+    if (!points.length) return;
+    points.pop();
+    const snapshot = new Image();
+    snapshot.onload = () => redrawFrozen(snapshot);
+    snapshot.src = URL.createObjectURL(cleanBlob);
+    $('undoPoint').disabled = points.length === 0;
+    $('buildGrid').disabled = points.length !== 4;
+    say(`Click corner ${points.length+1}: ${pointNames[points.length]}.`);
+  }
+
+  async function buildGrid() {
+    if (!cleanBlob || points.length !== 4) return;
+    $('buildGrid').disabled = true;
+    const fd = new FormData();
+    fd.append('background', cleanBlob, 'clean_court.png');
+    fd.append('image_points', JSON.stringify(points));
+    fd.append('coverage', $('coverage').value);
+    fd.append('margin_bu', $('marginBu').value);
+    try {
+      const r = await fetch('/api/wizard/calibrate',{method:'POST',body:fd});
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Calibration failed');
+      $('gridCells').textContent = d.external_cells;
+      stage = 'BALL_WAIT';
+      stepState(3,'DONE'); stepState(4,'NOW');
+      $('resumeForBall').disabled = false;
+      setBadge('OUTSIDE GRID READY','safe');
+      say(`Outside grid created: ${d.external_cells} external cells. Now show the ball.`);
+    } catch(e) {
+      $('buildGrid').disabled = false;
+      setBadge('CALIBRATION ERROR','bad');
+      say(e.message || String(e));
+    }
+  }
+
+  function resumeForBall() {
+    stage = 'BALL';
+    points = [];
+    $('resumeForBall').disabled = true;
+    say('Put the match ball in view and click directly on its center.');
+    const paint = () => {
+      if (stage !== 'BALL') return;
+      drawVideo();
+      requestAnimationFrame(paint);
+    };
+    requestAnimationFrame(paint);
+  }
+
+  async function finalizeBall() {
+    if (!selectedBall) return;
+    drawVideo();
+    const blob = await canvasBlob('image/png',1);
+    if (!blob) return;
+    const z = zones();
+    if (!z.length) {
+      setBadge('OWNERSHIP REQUIRED','bad');
+      say('Select at least one camera-owned outside zone.');
+      return;
+    }
+    const fd = new FormData();
+    fd.append('frame',blob,'ball_frame.png');
+    fd.append('x',selectedBall[0]);
+    fd.append('y',selectedBall[1]);
+    fd.append('crop_size',$('cropSize').value);
+    fd.append('camera_id',$('cameraId').value.trim() || 'net-camera-01');
+    fd.append('mount_position',$('mount').value);
+    fd.append('zones',z.join(','));
+    fd.append('receiving_side',$('side').value);
+    fd.append('depth_bu',$('depthBu').value);
+    try {
+      const r = await fetch('/api/wizard/select-ball',{method:'POST',body:fd});
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Ball selection failed');
+      configured = true;
+      stage = 'READY';
+      stepState(4,'DONE'); stepState(5,'DONE'); stepState(6,'READY');
+      $('cells').textContent = d.active_external_cells;
+      $('startLineCaller').disabled = false;
+      $('changeBall').disabled = false;
+      setBadge('READY','safe');
+      $('call').textContent = 'READY';
+      say('Calibration complete. Press Start LineCaller.');
+    } catch(e) {
+      stage = 'BALL';
+      setBadge('BALL ERROR','bad');
+      say(e.message || String(e));
+    }
+  }
+
+  async function setReceivingSide() {
+    if (!configured) return;
+    try {
+      const r = await fetch('/api/live/receiving-side',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({side:$('side').value})
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Side update failed');
+      $('cells').textContent = d.active_external_cells;
+    } catch(e) {
+      setBadge('SIDE ERROR','bad');
+      say(e.message || String(e));
+    }
+  }
+
+  async function sendFrame() {
+    if (!live || inflight || !video.videoWidth) return;
+    inflight = true;
+    try {
+      drawVideo();
+      const blob = await canvasBlob('image/jpeg',.88);
+      frameNo++;
+      const r = await fetch(
+        `/api/live/frame?frame_no=${frameNo}&now_s=${performance.now()/1000}&include_image=true`,
+        {method:'POST',headers:{'Content-Type':'image/jpeg'},body:blob}
+      );
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Frame failed');
+      $('pose').textContent = d.pose_state;
+      $('cells').textContent = d.active_external_cells;
+      $('z0').textContent = d.z0_candidates;
+      $('frame').textContent = d.frame_no;
+      if (d.rendered_jpeg_base64) {
+        processed.src='data:image/jpeg;base64,'+d.rendered_jpeg_base64;
+        processed.style.display='block';
+        canvas.style.display='none';
+      }
+      if (d.has_out) {
+        const c=d.out_calls[0];
+        $('call').textContent='OUT';
+        $('call').className='call out';
+        setBadge('OUT','warn');
+        say(`OUT confirmed - ${c.region} - cell ${c.cell_id}`);
+        try {
+          speechSynthesis.cancel();
+          const u=new SpeechSynthesisUtterance('OUT');
+          u.volume=1; u.rate=1;
+          speechSynthesis.speak(u);
+        } catch(_) {}
+      } else if (d.pose_state === 'BLOCKED') {
+        $('call').textContent='NO CALL';
+        $('call').className='call';
+        setBadge('POSE BLOCKED','bad');
+        say(d.pose_reason || d.reason);
+      } else {
+        $('call').textContent='LIVE';
+        $('call').className='call';
+        setBadge('SAFE','safe');
+        say(d.reason);
+      }
+    } catch(e) {
+      setBadge('LIVE ERROR','bad');
+      say(e.message || String(e));
+    } finally {
+      inflight=false;
+    }
+  }
+
+  function startLineCaller() {
+    if (!configured) return;
+    live=true; stage='LIVE'; frameNo=0;
+    $('startLineCaller').disabled=true;
+    $('changeBall').disabled=false;
+    setBadge('LIVE','safe');
+    say('LineCaller is live. Outside grid only.');
+    loopTimer=setInterval(sendFrame,125);
+  }
+
+  function changeBall() {
+    live=false;
+    if (loopTimer) clearInterval(loopTimer);
+    loopTimer=null;
+    processed.style.display='none';
+    canvas.style.display='block';
+    stage='BALL';
+    selectedBall=null;
+    stepState(4,'NOW');
+    $('startLineCaller').disabled=true;
+    say('Replacement ball mode: show the new ball and click its center.');
+    const paint=()=>{
+      if(stage!=='BALL') return;
+      drawVideo();
+      requestAnimationFrame(paint);
+    };
+    requestAnimationFrame(paint);
+  }
+
+  async function resetWizard() {
+    live=false;
+    if(loopTimer) clearInterval(loopTimer);
+    loopTimer=null;
+    await fetch('/api/wizard/reset',{method:'POST'});
+    configured=false; cleanBlob=null; points=[]; selectedBall=null;
+    processed.style.display='none'; canvas.style.display='block';
+    ['s1','s2','s3','s4','s5','s6'].forEach(id => $(id).textContent='WAIT');
+    for(let i=1;i<=6;i++) $('step'+i).className='step';
+    $('step1').classList.add('active'); $('s1').textContent='NOW';
+    $('captureCourt').disabled=true; $('buildGrid').disabled=true;
+    $('resumeForBall').disabled=true; $('startLineCaller').disabled=true;
+    $('changeBall').disabled=true;
+    $('cells').textContent='0'; $('z0').textContent='0'; $('frame').textContent='0'; $('gridCells').textContent='0';
+    $('pose').textContent='-'; $('call').textContent='READY FOR SETUP'; $('call').className='call';
+    stage = stream ? 'CLEAN' : 'CAMERA';
+    if(stream) {
+      stepState(1,'DONE'); stepState(2,'NOW'); $('captureCourt').disabled=false;
+      say('Calibration reset. Capture a new clean court frame.');
+    } else {
+      say('Open the camera to begin.');
+    }
+    setBadge('SETUP');
+  }
+
+  $('openCamera').addEventListener('click',openCamera);
+  $('captureCourt').addEventListener('click',captureCourt);
+  $('undoPoint').addEventListener('click',undoPoint);
+  $('buildGrid').addEventListener('click',buildGrid);
+  $('resumeForBall').addEventListener('click',resumeForBall);
+  $('startLineCaller').addEventListener('click',startLineCaller);
+  $('changeBall').addEventListener('click',changeBall);
+  $('resetWizard').addEventListener('click',resetWizard);
+  $('side').addEventListener('change',setReceivingSide);
+
+  stepState(1,'NOW');
+})();
+</script>
+</body>
+</html>
