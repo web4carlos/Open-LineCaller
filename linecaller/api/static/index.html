@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Open LineCaller Live</title>
+  <style>
+    :root {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+      color-scheme: dark;
+      background:#0b0f14;
+      color:#e7edf4;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; background:#0b0f14; }
+    header {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:16px 22px; border-bottom:1px solid #202a36; background:#111720;
+      position:sticky; top:0; z-index:3;
+    }
+    h1 { font-size:18px; margin:0; letter-spacing:.3px; }
+    .badge {
+      border:1px solid #3d4c5f; border-radius:999px; padding:6px 10px;
+      font-size:12px; font-weight:700; background:#18212c;
+    }
+    .safe { border-color:#3b8c5a; color:#93e6b0; }
+    .blocked { border-color:#9a4c4c; color:#ff9f9f; }
+    .out { border-color:#c79a3c; color:#ffd477; }
+    main {
+      width:min(1220px, 96vw); margin:18px auto 40px;
+      display:grid; grid-template-columns:360px 1fr; gap:18px;
+    }
+    .card {
+      background:#111720; border:1px solid #202a36; border-radius:14px;
+      padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.18);
+    }
+    .card h2 { font-size:14px; margin:0 0 14px; color:#b8c5d5; }
+    label { display:block; font-size:12px; color:#9aabbd; margin:10px 0 5px; }
+    input, select, button {
+      width:100%; border-radius:9px; border:1px solid #314052;
+      background:#0d131b; color:#e7edf4; padding:10px 11px;
+    }
+    input[type=file] { padding:8px; }
+    button {
+      cursor:pointer; font-weight:700; background:#172536; margin-top:10px;
+    }
+    button.primary { background:#245b93; border-color:#3477b8; }
+    button.stop { background:#592c31; border-color:#7f3f48; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .zones { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:7px; }
+    .zone {
+      display:flex; gap:7px; align-items:center; padding:8px;
+      border:1px solid #273546; border-radius:8px; font-size:11px;
+    }
+    .zone input { width:auto; margin:0; }
+    .video-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    video, #processed {
+      width:100%; aspect-ratio:16/9; background:#040609; border-radius:10px;
+      border:1px solid #263344; object-fit:contain;
+    }
+    .stats {
+      display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:12px;
+    }
+    .stat { background:#0c1219; border:1px solid #222f3e; border-radius:9px; padding:9px; }
+    .stat b { display:block; font-size:16px; margin-top:3px; }
+    .stat span { font-size:10px; color:#8ea0b2; text-transform:uppercase; }
+    .event {
+      margin-top:12px; padding:11px; border-radius:9px; background:#0c1219;
+      border:1px solid #263647; min-height:44px; font-size:13px;
+    }
+    .small { color:#8394a6; font-size:11px; line-height:1.5; }
+    .hidden { display:none; }
+    @media(max-width:900px) {
+      main { grid-template-columns:1fr; }
+      .video-grid { grid-template-columns:1fr; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Open LineCaller â€” Live Engineering Console</h1>
+  <div id="statusBadge" class="badge">NOT CONFIGURED</div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1. Configure live court</h2>
+
+    <label>External Grid calibration (.json)</label>
+    <input id="calibration" type="file" accept=".json,application/json" />
+
+    <label>Calibration background/reference image</label>
+    <input id="background" type="file" accept="image/*" />
+
+    <label>Ball template image</label>
+    <input id="ballTemplate" type="file" accept="image/*" />
+
+    <label>Camera ID</label>
+    <input id="cameraId" value="net-camera-01" />
+
+    <label>Mount position</label>
+    <select id="mountPosition">
+      <option>NET_LEFT</option>
+      <option>NET_RIGHT</option>
+      <option selected>NET_CENTER</option>
+      <option>OTHER</option>
+    </select>
+
+    <label>Receiving side</label>
+    <select id="receivingSide">
+      <option selected>FAR</option>
+      <option>NEAR</option>
+    </select>
+
+    <label>Camera-owned external zones</label>
+    <div class="zones">
+      <label class="zone"><input type="checkbox" value="FAR_LEFT" /> FAR_LEFT</label>
+      <label class="zone"><input type="checkbox" value="FAR_BASELINE" checked /> FAR_BASELINE</label>
+      <label class="zone"><input type="checkbox" value="FAR_RIGHT" /> FAR_RIGHT</label>
+      <label class="zone"><input type="checkbox" value="NEAR_LEFT" /> NEAR_LEFT</label>
+      <label class="zone"><input type="checkbox" value="NEAR_BASELINE" checked /> NEAR_BASELINE</label>
+      <label class="zone"><input type="checkbox" value="NEAR_RIGHT" /> NEAR_RIGHT</label>
+    </div>
+
+    <label>Exterior depth (Ball Units)</label>
+    <input id="depthBu" type="number" value="6" min="1" max="20" step="1" />
+
+    <button id="configureBtn" class="primary">Configure LineCaller</button>
+
+    <h2 style="margin-top:22px">2. Camera</h2>
+    <button id="startBtn" disabled>Start Camera + Live Calls</button>
+    <button id="stopBtn" class="stop" disabled>Stop</button>
+
+    <p class="small">
+      The browser camera is resized to the calibration resolution before each frame.
+      Use the same camera/orientation/resolution used during calibration whenever possible.
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>Live view</h2>
+    <div class="video-grid">
+      <div>
+        <label>Camera</label>
+        <video id="video" autoplay playsinline muted></video>
+      </div>
+      <div>
+        <label>LineCaller processed output</label>
+        <img id="processed" alt="Processed frame" />
+      </div>
+    </div>
+
+    <canvas id="capture" class="hidden"></canvas>
+
+    <div class="stats">
+      <div class="stat"><span>Pose</span><b id="pose">â€”</b></div>
+      <div class="stat"><span>Owned cells</span><b id="cells">0</b></div>
+      <div class="stat"><span>Z0 candidates</span><b id="z0">0</b></div>
+      <div class="stat"><span>Frame</span><b id="frameNo">0</b></div>
+    </div>
+
+    <div id="event" class="event">Waiting for configuration.</div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const el = id => document.getElementById(id);
+  const calibration = el('calibration');
+  const background = el('background');
+  const ballTemplate = el('ballTemplate');
+  const cameraId = el('cameraId');
+  const mountPosition = el('mountPosition');
+  const receivingSide = el('receivingSide');
+  const depthBu = el('depthBu');
+  const configureBtn = el('configureBtn');
+  const startBtn = el('startBtn');
+  const stopBtn = el('stopBtn');
+  const video = el('video');
+  const processed = el('processed');
+  const canvas = el('capture');
+  const ctx = canvas.getContext('2d');
+  const statusBadge = el('statusBadge');
+  const pose = el('pose');
+  const cells = el('cells');
+  const z0 = el('z0');
+  const frameNoEl = el('frameNo');
+  const eventEl = el('event');
+
+  let configured = false;
+  let imageSize = null;
+  let stream = null;
+  let running = false;
+  let inflight = false;
+  let frameNo = 0;
+  let timer = null;
+  let lastOutFrame = -1;
+
+  function selectedZones() {
+    return [...document.querySelectorAll('.zone input:checked')].map(x => x.value);
+  }
+
+  function setBadge(text, cls='') {
+    statusBadge.textContent = text;
+    statusBadge.className = 'badge ' + cls;
+  }
+
+  function setEvent(text) {
+    eventEl.textContent = text;
+  }
+
+  async function configure() {
+    if (!calibration.files[0] || !background.files[0] || !ballTemplate.files[0]) {
+      setEvent('Select calibration, background, and ball template first.');
+      return;
+    }
+    const zones = selectedZones();
+    if (!zones.length) {
+      setEvent('Select at least one exterior zone for this camera.');
+      return;
+    }
+
+    configureBtn.disabled = true;
+    setEvent('Configuring official external live runtimeâ€¦');
+
+    const fd = new FormData();
+    fd.append('calibration', calibration.files[0]);
+    fd.append('background', background.files[0]);
+    fd.append('ball_template', ballTemplate.files[0]);
+    fd.append('camera_id', cameraId.value.trim() || 'camera-01');
+    fd.append('mount_position', mountPosition.value);
+    fd.append('zones', zones.join(','));
+    fd.append('receiving_side', receivingSide.value);
+    fd.append('depth_bu', depthBu.value);
+
+    try {
+      const r = await fetch('/api/live/configure-upload', {method:'POST', body:fd});
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Configuration failed');
+      configured = true;
+      imageSize = d.image_size;
+      canvas.width = imageSize[0];
+      canvas.height = imageSize[1];
+      cells.textContent = d.active_external_cells;
+      setBadge('CONFIGURED', 'safe');
+      setEvent(`Camera ${d.camera_id}: ${d.active_external_cells} exterior cells active.`);
+      startBtn.disabled = false;
+    } catch (e) {
+      configured = false;
+      startBtn.disabled = true;
+      setBadge('CONFIG ERROR', 'blocked');
+      setEvent(e.message || String(e));
+    } finally {
+      configureBtn.disabled = false;
+    }
+  }
+
+  async function setSide() {
+    if (!configured) return;
+    try {
+      const r = await fetch('/api/live/receiving-side', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({side:receivingSide.value})
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Side change failed');
+      cells.textContent = d.active_external_cells;
+      setEvent(`Receiving side changed to ${d.receiving_side}.`);
+    } catch(e) {
+      setEvent(e.message || String(e));
+    }
+  }
+
+  function canvasBlob() {
+    return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.88));
+  }
+
+  async function sendFrame() {
+    if (!running || inflight || !video.videoWidth || !imageSize) return;
+    inflight = true;
+    try {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const blob = await canvasBlob();
+      if (!blob) return;
+
+      frameNo += 1;
+      const nowS = performance.now() / 1000.0;
+      const r = await fetch(
+        `/api/live/frame?frame_no=${frameNo}&now_s=${nowS}&include_image=true`,
+        {
+          method:'POST',
+          headers:{'Content-Type':'image/jpeg'},
+          body:blob
+        }
+      );
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Frame processing failed');
+
+      pose.textContent = d.pose_state;
+      cells.textContent = d.active_external_cells;
+      z0.textContent = d.z0_candidates;
+      frameNoEl.textContent = d.frame_no;
+
+      if (d.rendered_jpeg_base64) {
+        processed.src = 'data:image/jpeg;base64,' + d.rendered_jpeg_base64;
+      }
+
+      if (d.has_out) {
+        setBadge('OUT', 'out');
+        const first = d.out_calls[0];
+        setEvent(`OUT â€” ${first.region} â€” cell ${first.cell_id}`);
+        if (lastOutFrame !== d.frame_no) {
+          lastOutFrame = d.frame_no;
+          try {
+            speechSynthesis.cancel();
+            const u = new SpeechSynthesisUtterance('OUT');
+            u.rate = 1.0;
+            u.volume = 1.0;
+            speechSynthesis.speak(u);
+          } catch (_) {}
+        }
+      } else if (d.pose_state === 'BLOCKED') {
+        setBadge('NO CALL â€” POSE BLOCKED', 'blocked');
+        setEvent(d.pose_reason || d.reason);
+      } else if (d.reason === 'POSE_REPAIRED_RECHECK_REQUIRED') {
+        setBadge('RECHECKING CAMERA', 'blocked');
+        setEvent('Camera moved slightly. Geometry repaired; waiting for SAFE.');
+      } else {
+        setBadge(d.pose_state, d.pose_state === 'SAFE' ? 'safe' : '');
+        setEvent(d.reason);
+      }
+    } catch (e) {
+      setBadge('LIVE ERROR', 'blocked');
+      setEvent(e.message || String(e));
+    } finally {
+      inflight = false;
+    }
+  }
+
+  async function start() {
+    if (!configured || !imageSize) return;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video:{
+          width:{ideal:imageSize[0]},
+          height:{ideal:imageSize[1]},
+          facingMode:{ideal:'environment'}
+        },
+        audio:false
+      });
+      video.srcObject = stream;
+      await video.play();
+
+      running = true;
+      frameNo = 0;
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      setEvent('Live camera running.');
+
+      // Conservative engineering gate: ~8 fps. We can tune after real court tests.
+      timer = setInterval(sendFrame, 125);
+    } catch (e) {
+      setBadge('CAMERA ERROR', 'blocked');
+      setEvent(e.message || String(e));
+    }
+  }
+
+  function stop() {
+    running = false;
+    if (timer) clearInterval(timer);
+    timer = null;
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null;
+    video.srcObject = null;
+    startBtn.disabled = !configured;
+    stopBtn.disabled = true;
+    setBadge(configured ? 'CONFIGURED' : 'NOT CONFIGURED', configured ? 'safe' : '');
+    setEvent('Live camera stopped.');
+  }
+
+  configureBtn.addEventListener('click', configure);
+  startBtn.addEventListener('click', start);
+  stopBtn.addEventListener('click', stop);
+  receivingSide.addEventListener('change', setSide);
+})();
+</script>
+</body>
+</html>
