@@ -28,6 +28,7 @@ from linecaller.dcf.external_grid_frame_loop import (
     LockedBallColorProfile,
 )
 from linecaller.dcf.official_external_live_runtime import (
+    OfficialExternalLiveConfig,
     OfficialExternalLiveRuntime,
 )
 
@@ -147,6 +148,15 @@ class LiveRuntimeRegistry:
             ball_profile,
             ownership,
             receiving_side=receiving_side,
+            config=OfficialExternalLiveConfig(
+                projected_z0_signatures=True,
+                require_approach_memory=True,
+                approach_history_frames=3,
+                approach_min_prior_observations=2,
+                projection_anchor_distance_bu=0.95,
+                approach_prediction_radius_bu=2.50,
+                approach_min_total_motion_bu=0.65,
+            ),
         )
 
         self.runtime = runtime
@@ -251,6 +261,7 @@ def health() -> dict[str, Any]:
         "version": "CP-0036.2",
         "feature_version": "CP-0036.2.1",
         "runtime_feature_version": "CP-0036.2.3",
+        "ball_identity_feature_version": "CP-0036.2.4",
         "configured": registry.runtime is not None,
     }
 
@@ -431,6 +442,11 @@ async def process_frame(
         payload["ball_footprints"] = loop.ball_footprints
         payload["merged_motion_footprints"] = loop.merged_motion_footprints
         payload["boundary_guard_rejections"] = loop.boundary_guard_rejections
+        payload["projected_signature_matches"] = loop.projected_signature_matches
+        payload["projected_signature_rejections"] = loop.projected_signature_rejections
+        payload["approach_rejections"] = loop.approach_rejections
+        payload["motion_history_observations"] = loop.motion_history_observations
+        payload["predicted_z0_cell"] = loop.predicted_z0_cell
         payload["z0_candidates"] = len(loop.z0_candidates)
         payload["up_confirmations"] = len(loop.up_confirmations)
         payload["z0_events"] = [
@@ -467,6 +483,11 @@ async def process_frame(
         payload["ball_footprints"] = 0
         payload["merged_motion_footprints"] = 0
         payload["boundary_guard_rejections"] = 0
+        payload["projected_signature_matches"] = 0
+        payload["projected_signature_rejections"] = 0
+        payload["approach_rejections"] = 0
+        payload["motion_history_observations"] = 0
+        payload["predicted_z0_cell"] = None
         payload["z0_candidates"] = 0
         payload["up_confirmations"] = 0
         payload["z0_events"] = []

@@ -292,6 +292,7 @@ class LockedBallColorProfile:
     hue_tolerance: float
     saturation_min: int
     value_min: int
+    template_fill_ratio: float = 0.65
 
     @staticmethod
     def _hue_distance(values: np.ndarray, center: float) -> np.ndarray:
@@ -325,11 +326,22 @@ class LockedBallColorProfile:
         hc = angle * 256.0 / (2.0 * math.pi)
         spread = cls._hue_distance(hues, hc)
         p90 = float(np.percentile(spread, 90)) if spread.size else 0.0
+        fg_y, fg_x = np.nonzero(fg)
+        if fg_x.size:
+            tight_fill_area = max(
+                1,
+                (int(fg_x.max()) - int(fg_x.min()) + 1)
+                * (int(fg_y.max()) - int(fg_y.min()) + 1),
+            )
+            template_fill_ratio = float(fg.sum()) / float(tight_fill_area)
+        else:
+            template_fill_ratio = 0.65
         return cls(
             hue_center=hc,
             hue_tolerance=min(16.0, max(5.0, p90 * 2.0 + 2.0)),
             saturation_min=int(max(35.0, float(np.percentile(sat[fg], 10)) - 20.0)),
             value_min=int(max(100.0, float(np.percentile(val[fg], 10)) - 55.0)),
+            template_fill_ratio=template_fill_ratio,
         )
 
 
@@ -383,6 +395,11 @@ class ExternalFrameResult:
     ball_footprints: int = 0
     merged_motion_footprints: int = 0
     boundary_guard_rejections: int = 0
+    projected_signature_matches: int = 0
+    projected_signature_rejections: int = 0
+    approach_rejections: int = 0
+    motion_history_observations: int = 0
+    predicted_z0_cell: int | None = None
 
     @property
     def bingo_cells(self) -> tuple[UpConfirmation, ...]:

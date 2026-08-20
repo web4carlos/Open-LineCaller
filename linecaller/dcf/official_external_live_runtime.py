@@ -28,6 +28,9 @@ from linecaller.dcf.external_grid_frame_loop import (
     LockedBallColorProfile,
     UpConfirmation,
 )
+from linecaller.dcf.projected_z0_identity import (
+    ProjectedIdentityExternalGridFrameLoop,
+)
 from linecaller.dcf.z0_floor_glow_renderer import render_soft_floor_glow
 
 
@@ -50,6 +53,16 @@ class OfficialExternalLiveConfig:
     motion_merge_gap_px: float = 8.0
     min_outside_clearance_bu: float = 0.20
 
+    # Historical runtime defaults remain unchanged. The Wizard/API opts into
+    # these CP-0036.2.4 gates explicitly.
+    projected_z0_signatures: bool = False
+    require_approach_memory: bool = False
+    approach_history_frames: int = 3
+    approach_min_prior_observations: int = 2
+    projection_anchor_distance_bu: float = 0.95
+    approach_prediction_radius_bu: float = 2.50
+    approach_min_total_motion_bu: float = 0.65
+
     def __post_init__(self) -> None:
         if self.glow_hold_s <= 0.0:
             raise ValueError("glow_hold_s must be > 0")
@@ -59,6 +72,23 @@ class OfficialExternalLiveConfig:
             raise ValueError("motion_merge_gap_px must be >= 0")
         if self.min_outside_clearance_bu < 0.0:
             raise ValueError("min_outside_clearance_bu must be >= 0")
+        if self.approach_history_frames < 2:
+            raise ValueError("approach_history_frames must be >= 2")
+        if not (
+            1
+            <= self.approach_min_prior_observations
+            <= self.approach_history_frames
+        ):
+            raise ValueError(
+                "approach_min_prior_observations must be in "
+                "[1, approach_history_frames]"
+            )
+        if self.projection_anchor_distance_bu <= 0.0:
+            raise ValueError("projection_anchor_distance_bu must be > 0")
+        if self.approach_prediction_radius_bu <= 0.0:
+            raise ValueError("approach_prediction_radius_bu must be > 0")
+        if self.approach_min_total_motion_bu <= 0.0:
+            raise ValueError("approach_min_total_motion_bu must be > 0")
 
 
 @dataclass(frozen=True)
@@ -200,10 +230,7 @@ class OfficialExternalLiveRuntime:
         calibration: ExternalGridCalibration,
     ) -> ExternalGridFrameLoop:
         c = self.config
-        return ExternalGridFrameLoop(
-            calibration,
-            self._background,
-            self.ball_profile,
+        common = dict(
             difference_threshold=c.difference_threshold,
             min_color_pixels=c.min_color_pixels,
             min_floor_scale_ratio=c.min_floor_scale_ratio,
@@ -217,6 +244,36 @@ class OfficialExternalLiveRuntime:
             bingo_cooldown_frames=c.bingo_cooldown_frames,
             motion_merge_gap_px=c.motion_merge_gap_px,
             min_outside_clearance_bu=c.min_outside_clearance_bu,
+        )
+
+        if c.projected_z0_signatures or c.require_approach_memory:
+            return ProjectedIdentityExternalGridFrameLoop(
+                calibration,
+                self._background,
+                self.ball_profile,
+                use_projected_signatures=c.projected_z0_signatures,
+                require_approach_memory=c.require_approach_memory,
+                approach_history_frames=c.approach_history_frames,
+                approach_min_prior_observations=(
+                    c.approach_min_prior_observations
+                ),
+                projection_anchor_distance_bu=(
+                    c.projection_anchor_distance_bu
+                ),
+                approach_prediction_radius_bu=(
+                    c.approach_prediction_radius_bu
+                ),
+                approach_min_total_motion_bu=(
+                    c.approach_min_total_motion_bu
+                ),
+                **common,
+            )
+
+        return ExternalGridFrameLoop(
+            calibration,
+            self._background,
+            self.ball_profile,
+            **common,
         )
 
     def _rebuild_owned_runtime(self) -> None:

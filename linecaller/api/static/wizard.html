@@ -340,6 +340,11 @@
         <div class="stat"><span>Raw blobs</span><b id="rawBlobs">0</b></div>
         <div class="stat"><span>Footprints</span><b id="footprints">0</b></div>
         <div class="stat"><span>Blur merges</span><b id="blurMerges">0</b></div>
+        <div class="stat"><span>Proj matches</span><b id="projMatches">0</b></div>
+        <div class="stat"><span>Proj rejects</span><b id="projRejects">0</b></div>
+        <div class="stat"><span>Approach rejects</span><b id="approachRejects">0</b></div>
+        <div class="stat"><span>Motion obs</span><b id="motionObs">0</b></div>
+        <div class="stat"><span>Pred cell</span><b id="predCell">-</b></div>
         <div class="stat"><span>Z0 total</span><b id="z0Total">0</b></div>
         <div class="stat"><span>UP total</span><b id="upTotal">0</b></div>
         <div class="stat"><span>OUT total</span><b id="outTotal">0</b></div>
@@ -469,14 +474,17 @@
   function resetTelemetry() {
     telemetry = {
       z0Total:0, upTotal:0, outTotal:0, lineGuards:0,
+      projMatchesTotal:0, projRejectsTotal:0, approachRejectsTotal:0,
       lastZ0:null, lastOut:null, events:[]
     };
     for (const id of ['ballPixels','rawBlobs','footprints','blurMerges',
+                      'projMatches','projRejects','approachRejects','motionObs',
                       'z0Total','upTotal','outTotal','lineGuards']) {
       $(id).textContent='0';
     }
     $('lastZ0').textContent='-';
     $('lastOut').textContent='-';
+    $('predCell').textContent='-';
     $('eventLog').textContent='No events yet.';
   }
 
@@ -492,6 +500,21 @@
     $('rawBlobs').textContent = d.raw_ball_components ?? 0;
     $('footprints').textContent = d.ball_footprints ?? 0;
     $('blurMerges').textContent = d.merged_motion_footprints ?? 0;
+
+    const projMatches = Number(d.projected_signature_matches || 0);
+    const projRejects = Number(d.projected_signature_rejections || 0);
+    const approachRejects = Number(d.approach_rejections || 0);
+    telemetry.projMatchesTotal += projMatches;
+    telemetry.projRejectsTotal += projRejects;
+    telemetry.approachRejectsTotal += approachRejects;
+    $('projMatches').textContent = telemetry.projMatchesTotal;
+    $('projRejects').textContent = telemetry.projRejectsTotal;
+    $('approachRejects').textContent = telemetry.approachRejectsTotal;
+    $('motionObs').textContent = d.motion_history_observations ?? 0;
+    $('predCell').textContent =
+      (d.predicted_z0_cell === null || d.predicted_z0_cell === undefined)
+        ? '-'
+        : String(d.predicted_z0_cell);
 
     const z0n = Number(d.z0_candidates || 0);
     const upn = Number(d.up_confirmations || 0);
