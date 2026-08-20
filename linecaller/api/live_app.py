@@ -250,6 +250,7 @@ def health() -> dict[str, Any]:
         "service": "Open LineCaller Live API",
         "version": "CP-0036.2",
         "feature_version": "CP-0036.2.1",
+        "runtime_feature_version": "CP-0036.2.3",
         "configured": registry.runtime is not None,
     }
 
@@ -323,6 +324,21 @@ def configure_upload(
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _summary_dict()
+
+
+@app.post("/api/live/reset-events")
+def reset_live_events() -> dict[str, Any]:
+    runtime = registry.runtime
+    if runtime is None:
+        raise HTTPException(status_code=409, detail="Live runtime is not configured")
+    runtime.reset_event_state()
+    registry._frame_no = 0
+    registry.sync_runtime_summary()
+    return {
+        "ok": True,
+        "active_external_cells": runtime.active_external_cell_count,
+        "receiving_side": runtime.receiving_side,
+    }
 
 
 @app.post("/api/live/receiving-side")
@@ -408,15 +424,53 @@ async def process_frame(
     }
 
     if result.frame_loop_result is not None:
-        payload["z0_candidates"] = len(
-            result.frame_loop_result.z0_candidates
-        )
-        payload["up_confirmations"] = len(
-            result.frame_loop_result.up_confirmations
-        )
+        loop = result.frame_loop_result
+        payload["changed_pixels"] = loop.changed_pixels
+        payload["ball_color_changed_pixels"] = loop.ball_color_changed_pixels
+        payload["raw_ball_components"] = loop.raw_ball_components
+        payload["ball_footprints"] = loop.ball_footprints
+        payload["merged_motion_footprints"] = loop.merged_motion_footprints
+        payload["boundary_guard_rejections"] = loop.boundary_guard_rejections
+        payload["z0_candidates"] = len(loop.z0_candidates)
+        payload["up_confirmations"] = len(loop.up_confirmations)
+        payload["z0_events"] = [
+            {
+                "frame_no": z.frame_no,
+                "cell_id": z.cell_id,
+                "region": z.region,
+                "centroid_xy": list(z.centroid_xy),
+                "floor_xy_bu": list(z.floor_xy_bu),
+                "boundary_clearance_bu": z.boundary_clearance_bu,
+                "scale_ratio": z.scale_ratio,
+                "color_pixels": z.color_pixels,
+            }
+            for z in loop.z0_candidates
+        ]
+        payload["up_events"] = [
+            {
+                "contact_frame": u.contact_frame,
+                "confirm_frame": u.confirm_frame,
+                "cell_id": u.cell_id,
+                "region": u.region,
+                "contact_xy": list(u.contact_xy),
+                "above_xy": list(u.above_xy),
+                "up_bu": u.up_bu,
+                "lateral_bu": u.lateral_bu,
+                "scale_ratio_after": u.scale_ratio_after,
+            }
+            for u in loop.up_confirmations
+        ]
     else:
+        payload["changed_pixels"] = 0
+        payload["ball_color_changed_pixels"] = 0
+        payload["raw_ball_components"] = 0
+        payload["ball_footprints"] = 0
+        payload["merged_motion_footprints"] = 0
+        payload["boundary_guard_rejections"] = 0
         payload["z0_candidates"] = 0
         payload["up_confirmations"] = 0
+        payload["z0_events"] = []
+        payload["up_events"] = []
 
     if include_image:
         ok, jpeg = cv2.imencode(

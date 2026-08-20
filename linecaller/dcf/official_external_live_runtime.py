@@ -47,12 +47,18 @@ class OfficialExternalLiveConfig:
     max_after_scale_ratio: float = 1.80
     max_after_frames: int = 2
     bingo_cooldown_frames: int = 6
+    motion_merge_gap_px: float = 8.0
+    min_outside_clearance_bu: float = 0.20
 
     def __post_init__(self) -> None:
         if self.glow_hold_s <= 0.0:
             raise ValueError("glow_hold_s must be > 0")
         if not 0.0 <= self.glow_strength <= 1.0:
             raise ValueError("glow_strength must be in [0,1]")
+        if self.motion_merge_gap_px < 0.0:
+            raise ValueError("motion_merge_gap_px must be >= 0")
+        if self.min_outside_clearance_bu < 0.0:
+            raise ValueError("min_outside_clearance_bu must be >= 0")
 
 
 @dataclass(frozen=True)
@@ -209,6 +215,8 @@ class OfficialExternalLiveRuntime:
             max_after_scale_ratio=c.max_after_scale_ratio,
             max_after_frames=c.max_after_frames,
             bingo_cooldown_frames=c.bingo_cooldown_frames,
+            motion_merge_gap_px=c.motion_merge_gap_px,
+            min_outside_clearance_bu=c.min_outside_clearance_bu,
         )
 
     def _rebuild_owned_runtime(self) -> None:
@@ -230,6 +238,10 @@ class OfficialExternalLiveRuntime:
             self._frame_loop = self._new_frame_loop(
                 self._runtime_calibration,
             )
+
+    def reset_event_state(self) -> None:
+        self._glows.clear()
+        self._rebuild_owned_runtime()
 
     def set_receiving_side(
         self,

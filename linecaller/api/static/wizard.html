@@ -115,6 +115,20 @@
       color:#7f90a0;
     }
     .call.out { color:#ffd16c; text-shadow:0 0 18px rgba(255,196,65,.4); }
+    .telemetry-panel {
+      margin-top:10px; border:1px solid #26394b; border-radius:10px;
+      background:#0a1118; padding:10px;
+    }
+    .telemetry-title {
+      font-size:10px; font-weight:800; color:#9fb4c8;
+      text-transform:uppercase; letter-spacing:.5px; margin-bottom:7px;
+    }
+    .event-log {
+      margin-top:8px; max-height:150px; overflow:auto;
+      font:11px/1.45 Consolas, "Courier New", monospace;
+      color:#b7c9d9; white-space:pre-wrap;
+      border-top:1px solid #213346; padding-top:7px;
+    }
     .point-list { font-size:10px; color:#9cb0c4; line-height:1.5; margin-top:7px; }
     .mode-note {
       border-left:3px solid #3b719e; padding:7px 9px; margin-top:8px;
@@ -319,6 +333,23 @@
       <div class="stat"><span>Grid cells</span><b id="gridCells">0</b></div>
     </div>
 
+    <div class="telemetry-panel">
+      <div class="telemetry-title">Live Event Telemetry</div>
+      <div class="stats">
+        <div class="stat"><span>Ball pixels</span><b id="ballPixels">0</b></div>
+        <div class="stat"><span>Raw blobs</span><b id="rawBlobs">0</b></div>
+        <div class="stat"><span>Footprints</span><b id="footprints">0</b></div>
+        <div class="stat"><span>Blur merges</span><b id="blurMerges">0</b></div>
+        <div class="stat"><span>Z0 total</span><b id="z0Total">0</b></div>
+        <div class="stat"><span>UP total</span><b id="upTotal">0</b></div>
+        <div class="stat"><span>OUT total</span><b id="outTotal">0</b></div>
+        <div class="stat"><span>Line guards</span><b id="lineGuards">0</b></div>
+        <div class="stat"><span>Last Z0 video</span><b id="lastZ0">-</b></div>
+        <div class="stat"><span>Last OUT video</span><b id="lastOut">-</b></div>
+      </div>
+      <div id="eventLog" class="event-log">No events yet.</div>
+    </div>
+
     <div id="call" class="call">READY FOR VIDEO</div>
   </section>
 </main>
@@ -348,6 +379,7 @@
   let inflight = false;
   let runtimeFrameNo = 0;
   let renderRaf = null;
+  let telemetry = null;
 
   const pointNames = ['NEAR-LEFT','NEAR-RIGHT','FAR-RIGHT','FAR-LEFT'];
   const lineNames = ['NEAR baseline','RIGHT sideline','FAR baseline','LEFT sideline'];
@@ -432,6 +464,80 @@
       syncCalibrationControls();
       say(nextCalibrationInstruction());
     }
+  }
+
+  function resetTelemetry() {
+    telemetry = {
+      z0Total:0, upTotal:0, outTotal:0, lineGuards:0,
+      lastZ0:null, lastOut:null, events:[]
+    };
+    for (const id of ['ballPixels','rawBlobs','footprints','blurMerges',
+                      'z0Total','upTotal','outTotal','lineGuards']) {
+      $(id).textContent='0';
+    }
+    $('lastZ0').textContent='-';
+    $('lastOut').textContent='-';
+    $('eventLog').textContent='No events yet.';
+  }
+
+  function appendTelemetryEvent(text) {
+    telemetry.events.push(text);
+    if (telemetry.events.length > 14) telemetry.events.shift();
+    $('eventLog').textContent = telemetry.events.join('\n');
+    $('eventLog').scrollTop = $('eventLog').scrollHeight;
+  }
+
+  function updateTelemetry(d, videoFrameNo) {
+    $('ballPixels').textContent = d.ball_color_changed_pixels ?? 0;
+    $('rawBlobs').textContent = d.raw_ball_components ?? 0;
+    $('footprints').textContent = d.ball_footprints ?? 0;
+    $('blurMerges').textContent = d.merged_motion_footprints ?? 0;
+
+    const z0n = Number(d.z0_candidates || 0);
+    const upn = Number(d.up_confirmations || 0);
+    const guards = Number(d.boundary_guard_rejections || 0);
+
+    if (guards > 0) {
+      telemetry.lineGuards += guards;
+      appendTelemetryEvent(
+        `${videoFrameNo} LINE_GUARD x${guards} (touch/uncertain -> NO OUT)`
+      );
+    }
+
+    if (z0n > 0) {
+      telemetry.z0Total += z0n;
+      telemetry.lastZ0 = videoFrameNo;
+      const z = (d.z0_events || [])[0];
+      const detail = z
+        ? `${z.region} cell=${z.cell_id} clear=${Number(z.boundary_clearance_bu).toFixed(2)}BU`
+        : `x${z0n}`;
+      appendTelemetryEvent(`${videoFrameNo} Z0 ${detail}`);
+    }
+
+    if (upn > 0) {
+      telemetry.upTotal += upn;
+      const u = (d.up_events || [])[0];
+      const detail = u
+        ? `${u.region} cell=${u.cell_id} up=${Number(u.up_bu).toFixed(2)}BU`
+        : `x${upn}`;
+      appendTelemetryEvent(`${videoFrameNo} UP ${detail}`);
+    }
+
+    if (d.has_out) {
+      telemetry.outTotal += Number((d.out_calls || []).length || 1);
+      telemetry.lastOut = videoFrameNo;
+      const c=(d.out_calls || [])[0];
+      appendTelemetryEvent(
+        `${videoFrameNo} OUT ${c ? `${c.region} cell=${c.cell_id}` : ''}`
+      );
+    }
+
+    $('z0Total').textContent=telemetry.z0Total;
+    $('upTotal').textContent=telemetry.upTotal;
+    $('outTotal').textContent=telemetry.outTotal;
+    $('lineGuards').textContent=telemetry.lineGuards;
+    $('lastZ0').textContent=telemetry.lastZ0 ?? '-';
+    $('lastOut').textContent=telemetry.lastOut ?? '-';
   }
 
   function setBadge(text, cls='') {
@@ -559,6 +665,7 @@
     $('frame').textContent = '0';
     $('call').textContent = 'READY FOR VIDEO';
     $('call').className = 'call';
+    resetTelemetry();
   }
 
   function setSourceMode(mode) {
@@ -967,7 +1074,12 @@
       $('cells').textContent = d.active_external_cells;
       $('z0').textContent = d.z0_candidates;
       $('frame').textContent = d.frame_no;
-      $('videoFrame').textContent = Math.max(0,Math.round((video.currentTime||0)*fps()));
+      const currentVideoFrame = Math.max(
+        0,
+        Math.round((video.currentTime||0)*fps())
+      );
+      $('videoFrame').textContent = currentVideoFrame;
+      updateTelemetry(d, currentVideoFrame);
 
       if (d.rendered_jpeg_base64) {
         processed.src='data:image/jpeg;base64,'+d.rendered_jpeg_base64;
@@ -1037,8 +1149,18 @@
   async function startLineCaller() {
     if (!configured) return;
     stopNativePlayback();
+
+    const resetResponse = await fetch('/api/live/reset-events',{method:'POST'});
+    if (!resetResponse.ok) {
+      const detail = await resetResponse.json();
+      setBadge('RESET ERROR','bad');
+      say(detail.detail || 'Could not reset LineCaller event state.');
+      return;
+    }
+
     runtimeFrameNo=0;
     $('frame').textContent='0';
+    resetTelemetry();
     if (sourceMode === 'VIDEO') {
       analyzing=true;
       $('startLineCaller').disabled=true;
@@ -1199,6 +1321,7 @@
     updateTransport();
   });
 
+  resetTelemetry();
   activateCalibrationMode('QUAD');
   setSourceMode('VIDEO');
 })();

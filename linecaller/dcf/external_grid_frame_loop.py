@@ -339,6 +339,9 @@ class BallComponent:
     area: int
     centroid_xy: tuple[float, float]
     scale_px: float
+    # Number of raw same-color fragments merged into this physical footprint.
+    # A fast ball can appear as core + halo/streak in one exposure.
+    merged_from: int = 1
 
 
 @dataclass(frozen=True)
@@ -351,6 +354,8 @@ class Z0Candidate:
     observed_scale_px: float
     expected_floor_scale_px: float
     scale_ratio: float
+    floor_xy_bu: tuple[float, float] = (0.0, 0.0)
+    boundary_clearance_bu: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -374,6 +379,10 @@ class ExternalFrameResult:
     ball_color_changed_pixels: int
     z0_candidates: tuple[Z0Candidate, ...]
     up_confirmations: tuple[UpConfirmation, ...]
+    raw_ball_components: int = 0
+    ball_footprints: int = 0
+    merged_motion_footprints: int = 0
+    boundary_guard_rejections: int = 0
 
     @property
     def bingo_cells(self) -> tuple[UpConfirmation, ...]:
@@ -416,6 +425,8 @@ class ExternalGridFrameLoop:
         max_after_scale_ratio: float = 1.80,
         max_after_frames: int = 2,
         bingo_cooldown_frames: int = 6,
+        motion_merge_gap_px: float = 8.0,
+        min_outside_clearance_bu: float = 0.20,
     ) -> None:
         self.calibration = calibration
         self.background = background_rgb.convert("RGB")
@@ -433,8 +444,32 @@ class ExternalGridFrameLoop:
         self.max_after_scale_ratio = float(max_after_scale_ratio)
         self.max_after_frames = int(max_after_frames)
         self.bingo_cooldown_frames = int(bingo_cooldown_frames)
+        self.motion_merge_gap_px = float(motion_merge_gap_px)
+        self.min_outside_clearance_bu = float(min_outside_clearance_bu)
         if self.max_after_frames < 1:
             raise ValueError("max_after_frames must be >= 1")
+        if self.motion_merge_gap_px < 0.0:
+            raise ValueError("motion_merge_gap_px must be >= 0")
+        if self.min_outside_clearance_bu < 0.0:
+            raise ValueError("min_outside_clearance_bu must be >= 0")
+
+        coverage = CalibrationCoverage.parse(calibration.coverage)
+        court_x = float(calibration.config.court_x_bu)
+        court_y = float(calibration.config.court_y_bu(coverage))
+        image_quad = np.asarray(calibration.image_points, dtype=np.float32)
+        court_quad = np.asarray(
+            (
+                (0.0, court_y),
+                (court_x, court_y),
+                (court_x, 0.0),
+                (0.0, 0.0),
+            ),
+            dtype=np.float32,
+        )
+        self._image_to_top = cv2.getPerspectiveTransform(image_quad, court_quad)
+        self._court_x_bu = court_x
+        self._court_y_bu = court_y
+
         self._pending: list[_PendingZ0] = []
         self._last_bingo_frame_by_cell: dict[int, int] = {}
 
@@ -464,7 +499,7 @@ class ExternalGridFrameLoop:
             if w < 2 or h < 2:
                 continue
             aspect = max(w / h, h / w)
-            if aspect > 3.2:
+            if aspect > 4.8:
                 continue
             cx, cy = (float(v) for v in centroids[label])
             components.append(
@@ -477,8 +512,118 @@ class ExternalGridFrameLoop:
             )
         return changed, ball_changed, components
 
-    def _find_z0_candidates(self, frame_no: int, components: list[BallComponent]) -> list[Z0Candidate]:
+    @staticmethod
+    def _bbox_gap(a: BallComponent, b: BallComponent) -> float:
+        ax, ay, aw, ah = a.bbox
+        bx, by, bw, bh = b.bbox
+        ax1, ay1 = ax + aw, ay + ah
+        bx1, by1 = bx + bw, by + bh
+        dx = max(0.0, float(max(ax, bx) - min(ax1, bx1)))
+        dy = max(0.0, float(max(ay, by) - min(ay1, by1)))
+        return math.hypot(dx, dy)
+
+    def _merge_motion_components(
+        self,
+        components: list[BallComponent],
+    ) -> list[BallComponent]:
+        if len(components) < 2:
+            return list(components)
+
+        parent = list(range(len(components)))
+
+        def find(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def union(i: int, j: int) -> None:
+            ri, rj = find(i), find(j)
+            if ri != rj:
+                parent[rj] = ri
+
+        for i, a in enumerate(components):
+            for j in range(i + 1, len(components)):
+                b = components[j]
+                adaptive_gap = max(
+                    self.motion_merge_gap_px,
+                    0.65 * max(a.scale_px, b.scale_px),
+                )
+                if self._bbox_gap(a, b) > adaptive_gap:
+                    continue
+
+                ax, ay, aw, ah = a.bbox
+                bx, by, bw, bh = b.bbox
+                x0, y0 = min(ax, bx), min(ay, by)
+                x1, y1 = max(ax + aw, bx + bw), max(ay + ah, by + bh)
+                uw, uh = max(1, x1 - x0), max(1, y1 - y0)
+                aspect = max(uw / uh, uh / uw)
+                if aspect > 5.5:
+                    continue
+                if a.area + b.area > 520:
+                    continue
+                union(i, j)
+
+        groups: dict[int, list[BallComponent]] = {}
+        for i, component in enumerate(components):
+            groups.setdefault(find(i), []).append(component)
+
+        footprints: list[BallComponent] = []
+        for group in groups.values():
+            if len(group) == 1:
+                footprints.append(group[0])
+                continue
+
+            x0 = min(c.bbox[0] for c in group)
+            y0 = min(c.bbox[1] for c in group)
+            x1 = max(c.bbox[0] + c.bbox[2] for c in group)
+            y1 = max(c.bbox[1] + c.bbox[3] for c in group)
+            total_area = sum(c.area for c in group)
+            cx = sum(c.centroid_xy[0] * c.area for c in group) / total_area
+            cy = sum(c.centroid_xy[1] * c.area for c in group) / total_area
+            core_scale = max(c.scale_px for c in group)
+            footprints.append(
+                BallComponent(
+                    bbox=(x0, y0, x1 - x0, y1 - y0),
+                    area=total_area,
+                    centroid_xy=(float(cx), float(cy)),
+                    scale_px=float(core_scale),
+                    merged_from=len(group),
+                )
+            )
+        return footprints
+
+    def _image_point_to_floor_bu(
+        self,
+        x: float,
+        y: float,
+    ) -> tuple[float, float]:
+        p = np.asarray([[[float(x), float(y)]]], dtype=np.float32)
+        q = cv2.perspectiveTransform(p, self._image_to_top)[0, 0]
+        return float(q[0]), float(q[1])
+
+    def _outside_clearance_bu(self, x: float, y: float) -> float:
+        dx = 0.0
+        if x < 0.0:
+            dx = -x
+        elif x > self._court_x_bu:
+            dx = x - self._court_x_bu
+
+        dy = 0.0
+        if y < 0.0:
+            dy = -y
+        elif y > self._court_y_bu:
+            dy = y - self._court_y_bu
+
+        return math.hypot(dx, dy)
+
+    def _find_z0_candidates(
+        self,
+        frame_no: int,
+        components: list[BallComponent],
+    ) -> tuple[list[Z0Candidate], int]:
         candidates: list[Z0Candidate] = []
+        boundary_guard_rejections = 0
         # Required architecture: fixed EXTERNAL CELL LOOP. Cells watch
         # themselves; no component is followed from one cell to another.
         for cell in self.calibration.cells:
@@ -494,6 +639,13 @@ class ExternalGridFrameLoop:
                 ratio = comp.scale_px / expected
                 if not (self.min_floor_scale_ratio <= ratio <= self.max_floor_scale_ratio):
                     continue
+
+                floor_xy = self._image_point_to_floor_bu(cx, cy)
+                clearance = self._outside_clearance_bu(*floor_xy)
+                if clearance < self.min_outside_clearance_bu:
+                    boundary_guard_rejections += 1
+                    continue
+
                 candidates.append(
                     Z0Candidate(
                         frame_no=int(frame_no),
@@ -504,11 +656,13 @@ class ExternalGridFrameLoop:
                         observed_scale_px=comp.scale_px,
                         expected_floor_scale_px=expected,
                         scale_ratio=ratio,
+                        floor_xy_bu=floor_xy,
+                        boundary_clearance_bu=float(clearance),
                     )
                 )
                 break
         candidates.sort(key=lambda c: (abs(c.scale_ratio - 1.0), -c.color_pixels, c.cell_id))
-        return candidates
+        return candidates, boundary_guard_rejections
 
     def _confirm_up(self, frame_no: int, components: list[BallComponent]) -> list[UpConfirmation]:
         ux, uy = self.calibration.image_up_unit
@@ -584,16 +738,25 @@ class ExternalGridFrameLoop:
         if current.size != self.background.size:
             raise ValueError("frame size does not match calibration")
 
-        changed, ball_changed, components = self._components(current)
+        changed, ball_changed, raw_components = self._components(current)
         trace.append("PILLOW")
 
-        # Frame n: fixed external cells are checked for a floor/Z0 candidate.
-        z0_candidates = self._find_z0_candidates(frame_no, components)
+        # Preserve the historical public stage contract:
+        # FRAME -> PILLOW -> EXTERNAL_CELL_LOOP.
+        # CP-0036.2.3 adds motion-footprint and line-touch sub-stages without
+        # changing those first three canonical runtime stages.
         trace.append("EXTERNAL_CELL_LOOP")
+
+        components = self._merge_motion_components(raw_components)
+        trace.append("BALL_MOTION_FOOTPRINT")
+
+        z0_candidates, boundary_guard_rejections = self._find_z0_candidates(
+            frame_no,
+            components,
+        )
+        trace.append("LINE_TOUCH_GUARD")
         trace.append("Z0_CANDIDATE")
 
-        # After-the-fact confirmation checks ONLY UP from earlier Z0 candidates.
-        # There is intentionally no DOWN prerequisite.
         confirmations = self._confirm_up(frame_no, components)
         trace.append("UP_AFTER_FACT")
 
@@ -609,4 +772,10 @@ class ExternalGridFrameLoop:
             ball_color_changed_pixels=int(ball_changed.sum()),
             z0_candidates=tuple(z0_candidates),
             up_confirmations=tuple(confirmations),
+            raw_ball_components=len(raw_components),
+            ball_footprints=len(components),
+            merged_motion_footprints=sum(
+                1 for component in components if component.merged_from > 1
+            ),
+            boundary_guard_rejections=int(boundary_guard_rejections),
         )
