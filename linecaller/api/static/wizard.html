@@ -120,6 +120,18 @@
       border-left:3px solid #3b719e; padding:7px 9px; margin-top:8px;
       color:#9db3c7; font-size:10px; line-height:1.5;
     }
+    .quad-note {
+      padding:8px 9px; margin-top:8px; border-radius:8px;
+      background:#0a1118; border:1px solid #25384a;
+      color:#9db3c7; font-size:10px; line-height:1.5;
+    }
+    details.advanced-cal {
+      margin-top:9px; padding:7px 8px;
+      border:1px solid #25384a; border-radius:8px; background:#0a1118;
+    }
+    details.advanced-cal summary {
+      cursor:pointer; color:#91a9bd; font-size:10px; font-weight:750;
+    }
     @media(max-width:900px) {
       main { grid-template-columns:1fr; }
       .stats { grid-template-columns:repeat(2,1fr); }
@@ -184,27 +196,41 @@
     </div>
 
 
+
     <div id="step3" class="step">
-      <h2><span>3. Court boundaries</span><span id="s3">WAIT</span></h2>
-      <p>Recommended: mark two visible points on each OUTER boundary line. Corners may be outside the video.</p>
-      <div class="source-tabs">
-        <button id="useBoundaryLines" class="active">Boundary Lines</button>
-        <button id="useVisibleCorners">4 Visible Corners</button>
+      <h2><span>3. Adjust court</span><span id="s3">WAIT</span></h2>
+      <p>Drag the four corner handles until the blue outline follows the OUTER court boundary. A corner may move outside the video.</p>
+
+      <button id="useInteractiveQuad" class="primary active">Adjust 4 Corners</button>
+      <button id="resetQuad" disabled>Reset Quad</button>
+
+      <div class="quad-note">
+        Handles: NL = near-left, NR = near-right, FR = far-right, FL = far-left.
+        If a corner is outside the camera view, its edge handle is marked OFF.
       </div>
-      <div id="boundaryInstructions" class="point-list">
-        1-2. NEAR baseline<br>
-        3-4. RIGHT sideline<br>
-        5-6. FAR baseline<br>
-        7-8. LEFT sideline
-      </div>
-      <div id="cornerInstructions" class="point-list" style="display:none">
-        1. NEAR-LEFT<br>
-        2. NEAR-RIGHT<br>
-        3. FAR-RIGHT<br>
-        4. FAR-LEFT
-      </div>
-      <button id="undoPoint" disabled>Undo Last Point</button>
-      <button id="buildGrid" class="primary" disabled>Build Outside Grid</button>
+
+      <details class="advanced-cal">
+        <summary>Advanced calibration tools</summary>
+        <div class="source-tabs">
+          <button id="useBoundaryLines">Boundary Lines</button>
+          <button id="useVisibleCorners">4 Visible Corners</button>
+        </div>
+        <div id="boundaryInstructions" class="point-list" style="display:none">
+          1-2. NEAR baseline<br>
+          3-4. RIGHT sideline<br>
+          5-6. FAR baseline<br>
+          7-8. LEFT sideline
+        </div>
+        <div id="cornerInstructions" class="point-list" style="display:none">
+          1. NEAR-LEFT<br>
+          2. NEAR-RIGHT<br>
+          3. FAR-RIGHT<br>
+          4. FAR-LEFT
+        </div>
+      </details>
+
+      <button id="undoPoint" style="display:none" disabled>Undo Last Point</button>
+      <button id="buildGrid" class="primary" disabled>Confirm Court & Build Outside Grid</button>
     </div>
 
     <div id="step4" class="step">
@@ -313,7 +339,9 @@
   let cleanBlob = null;
   let frozenBitmap = null;
   let points = [];
-  let calibrationMode = 'LINES';
+  let calibrationMode = 'QUAD';
+  let draggingCorner = -1;
+  let dragPointerId = null;
   let selectedBall = null;
   let configured = false;
   let analyzing = false;
@@ -324,8 +352,11 @@
   const pointNames = ['NEAR-LEFT','NEAR-RIGHT','FAR-RIGHT','FAR-LEFT'];
   const lineNames = ['NEAR baseline','RIGHT sideline','FAR baseline','LEFT sideline'];
 
+  const quadLabels = ['NL','NR','FR','FL'];
+
   function requiredCalibrationClicks() {
-    return calibrationMode === 'LINES' ? 8 : 4;
+    if (calibrationMode === 'LINES') return 8;
+    return 4;
   }
 
   function boundaryLinePayload() {
@@ -338,13 +369,69 @@
     };
   }
 
+  function initializeQuad() {
+    const w = canvas.width;
+    const h = canvas.height;
+    points = [
+      [0.06*w, 0.93*h],
+      [0.94*w, 0.93*h],
+      [0.76*w, 0.42*h],
+      [0.24*w, 0.42*h]
+    ];
+  }
+
+  function clamp(v, lo, hi) {
+    return Math.max(lo, Math.min(hi, v));
+  }
+
+  function isOffscreenPoint(p) {
+    return p[0] < 0 || p[0] >= canvas.width || p[1] < 0 || p[1] >= canvas.height;
+  }
+
+  function handleDisplayPoint(p) {
+    const pad = 18;
+    return [
+      clamp(p[0], pad, canvas.width-pad),
+      clamp(p[1], pad, canvas.height-pad)
+    ];
+  }
+
   function nextCalibrationInstruction() {
+    if (calibrationMode === 'QUAD') {
+      return 'Drag NL, NR, FR and FL to the four real court corners, then Confirm Court.';
+    }
     if (calibrationMode === 'CORNERS') {
       return `Click corner ${points.length + 1}: ${pointNames[points.length]}.`;
     }
     const lineIndex = Math.floor(points.length / 2);
     const clickInLine = (points.length % 2) + 1;
     return `Click point ${clickInLine} on ${lineNames[lineIndex]}.`;
+  }
+
+  function syncCalibrationControls() {
+    const inCalibration = stage === 'CORNERS';
+    $('resetQuad').disabled = !(inCalibration && calibrationMode === 'QUAD');
+    $('undoPoint').style.display = calibrationMode === 'QUAD' ? 'none' : 'block';
+    $('undoPoint').disabled = calibrationMode === 'QUAD' || points.length === 0;
+    $('buildGrid').disabled = !inCalibration ||
+      points.length !== requiredCalibrationClicks();
+  }
+
+  function activateCalibrationMode(mode) {
+    calibrationMode = mode;
+    $('useInteractiveQuad').classList.toggle('active', mode === 'QUAD');
+    $('useBoundaryLines').classList.toggle('active', mode === 'LINES');
+    $('useVisibleCorners').classList.toggle('active', mode === 'CORNERS');
+    $('boundaryInstructions').style.display = mode === 'LINES' ? 'block' : 'none';
+    $('cornerInstructions').style.display = mode === 'CORNERS' ? 'block' : 'none';
+
+    if (stage === 'CORNERS') {
+      if (mode === 'QUAD') initializeQuad();
+      else points = [];
+      redrawFrozen();
+      syncCalibrationControls();
+      say(nextCalibrationInstruction());
+    }
   }
 
   function setBadge(text, cls='') {
@@ -562,14 +649,15 @@
     cleanBlob = await new Promise(resolve => canvas.toBlob(resolve,'image/png',1));
     if (!cleanBlob) return;
     frozenBitmap = await createImageBitmap(cleanBlob);
-    points = [];
     stage = 'CORNERS';
-    calibrationMode = $('useBoundaryLines').classList.contains('active') ? 'LINES' : 'CORNERS';
+
+    if (calibrationMode === 'QUAD') initializeQuad();
+    else points = [];
+
     redrawFrozen();
     stepState(2,'DONE');
     stepState(3,'NOW');
-    $('undoPoint').disabled = true;
-    $('buildGrid').disabled = true;
+    syncCalibrationControls();
     say(nextCalibrationInstruction());
   }
 
@@ -598,22 +686,33 @@
       ctx.moveTo(points[0][0],points[0][1]);
       for (let i=1;i<points.length;i++) ctx.lineTo(points[i][0],points[i][1]);
       if (points.length === 4) ctx.closePath();
+      if (calibrationMode === 'QUAD' && points.length === 4) {
+        ctx.fillStyle = 'rgba(70,150,225,0.10)';
+        ctx.fill();
+      }
       ctx.strokeStyle = '#64b5ff';
-      ctx.lineWidth = 3;
+      ctx.lineWidth = calibrationMode === 'QUAD' ? 4 : 3;
       ctx.stroke();
     }
 
     points.forEach((p,i) => {
+      const hp = calibrationMode === 'QUAD' ? handleDisplayPoint(p) : p;
+      const off = calibrationMode === 'QUAD' && isOffscreenPoint(p);
+
       ctx.beginPath();
-      ctx.arc(p[0],p[1],7,0,Math.PI*2);
-      ctx.fillStyle = '#ffcf5a';
+      ctx.arc(hp[0],hp[1],calibrationMode === 'QUAD' ? 11 : 7,0,Math.PI*2);
+      ctx.fillStyle = off ? '#ff9b59' : '#ffcf5a';
       ctx.fill();
       ctx.lineWidth = 2;
       ctx.strokeStyle = '#111';
       ctx.stroke();
+
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 14px sans-serif';
-      ctx.fillText(String(i+1),p[0]+10,p[1]-10);
+      const label = calibrationMode === 'QUAD'
+        ? `${quadLabels[i]}${off ? ' OFF' : ''}`
+        : String(i+1);
+      ctx.fillText(label,hp[0]+14,hp[1]-10);
     });
   }
 
@@ -625,8 +724,60 @@
     ];
   }
 
+  function nearestQuadHandle(ev) {
+    const p = canvasPoint(ev);
+    let best = -1;
+    let bestDistance = Infinity;
+    points.forEach((corner, i) => {
+      const hp = handleDisplayPoint(corner);
+      const d = Math.hypot(p[0]-hp[0], p[1]-hp[1]);
+      if (d < bestDistance) {
+        bestDistance = d;
+        best = i;
+      }
+    });
+    return bestDistance <= 34 ? best : -1;
+  }
+
+  canvas.addEventListener('pointerdown', ev => {
+    if (stage !== 'CORNERS' || calibrationMode !== 'QUAD') return;
+    const hit = nearestQuadHandle(ev);
+    if (hit < 0) return;
+    draggingCorner = hit;
+    dragPointerId = ev.pointerId;
+    canvas.setPointerCapture(ev.pointerId);
+    ev.preventDefault();
+  });
+
+  canvas.addEventListener('pointermove', ev => {
+    if (draggingCorner < 0 || calibrationMode !== 'QUAD') return;
+    const p = canvasPoint(ev);
+    points[draggingCorner] = [
+      clamp(p[0], -0.75*canvas.width, 1.75*canvas.width),
+      clamp(p[1], -0.75*canvas.height, 1.75*canvas.height)
+    ];
+    redrawFrozen();
+    say(`${quadLabels[draggingCorner]} adjusted. Drag any handle or Confirm Court.`);
+    ev.preventDefault();
+  });
+
+  function endQuadDrag(ev) {
+    if (draggingCorner < 0) return;
+    if (dragPointerId !== null && canvas.hasPointerCapture(dragPointerId)) {
+      canvas.releasePointerCapture(dragPointerId);
+    }
+    draggingCorner = -1;
+    dragPointerId = null;
+    syncCalibrationControls();
+    ev.preventDefault();
+  }
+
+  canvas.addEventListener('pointerup', endQuadDrag);
+  canvas.addEventListener('pointercancel', endQuadDrag);
+
   canvas.addEventListener('click', async ev => {
     if (stage === 'CORNERS') {
+      if (calibrationMode === 'QUAD') return;
       const required = requiredCalibrationClicks();
       if (points.length >= required) return;
       points.push(canvasPoint(ev));
@@ -671,7 +822,9 @@
     $('buildGrid').disabled = true;
     const fd = new FormData();
     fd.append('background',cleanBlob,'clean_court.png');
-    if (calibrationMode === 'LINES') {
+    if (calibrationMode === 'QUAD') {
+      fd.append('quad_points',JSON.stringify(points));
+    } else if (calibrationMode === 'LINES') {
       fd.append('boundary_lines', JSON.stringify(boundaryLinePayload()));
     } else {
       fd.append('image_points',JSON.stringify(points));
@@ -691,10 +844,13 @@
       $('selectBallFrame').disabled = false;
       const inferred = Number(d.offscreen_corners || 0);
       const inferenceNote = inferred > 0
-        ? ` ${inferred} court corner(s) were inferred outside the visible frame.`
+        ? ` ${inferred} court corner(s) are outside the visible frame.`
+        : '';
+      const methodNote = d.calibration_method === 'INTERACTIVE_QUAD'
+        ? ' Interactive 4-corner geometry confirmed.'
         : '';
       if (sourceMode === 'VIDEO') {
-        say(`Outside grid created: ${d.external_cells} external cells.${inferenceNote} Seek to a clear ball frame, then click Select Ball From Current Frame.`);
+        say(`Outside grid created: ${d.external_cells} external cells.${methodNote}${inferenceNote} Seek to a clear ball frame, then click Select Ball From Current Frame.`);
       } else {
         say(`Outside grid created: ${d.external_cells} external cells. Show the ball, then arm ball selection.`);
       }
@@ -966,23 +1122,22 @@
     await seekTo(video.currentTime + direction*frameStepSeconds());
   }
 
+  $('useInteractiveQuad').addEventListener('click',()=>{
+    activateCalibrationMode('QUAD');
+  });
+  $('resetQuad').addEventListener('click',()=>{
+    if (stage !== 'CORNERS') return;
+    calibrationMode='QUAD';
+    initializeQuad();
+    redrawFrozen();
+    syncCalibrationControls();
+    say('Quad reset. Drag NL, NR, FR and FL to the real court corners.');
+  });
   $('useBoundaryLines').addEventListener('click',()=>{
-    if (stage === 'CORNERS' && points.length) return;
-    calibrationMode='LINES';
-    $('useBoundaryLines').classList.add('active');
-    $('useVisibleCorners').classList.remove('active');
-    $('boundaryInstructions').style.display='block';
-    $('cornerInstructions').style.display='none';
-    if (stage === 'CORNERS') say(nextCalibrationInstruction());
+    activateCalibrationMode('LINES');
   });
   $('useVisibleCorners').addEventListener('click',()=>{
-    if (stage === 'CORNERS' && points.length) return;
-    calibrationMode='CORNERS';
-    $('useVisibleCorners').classList.add('active');
-    $('useBoundaryLines').classList.remove('active');
-    $('boundaryInstructions').style.display='none';
-    $('cornerInstructions').style.display='block';
-    if (stage === 'CORNERS') say(nextCalibrationInstruction());
+    activateCalibrationMode('CORNERS');
   });
 
   $('useVideo').addEventListener('click',()=>setSourceMode('VIDEO'));
@@ -1044,6 +1199,7 @@
     updateTransport();
   });
 
+  activateCalibrationMode('QUAD');
   setSourceMode('VIDEO');
 })();
 </script>

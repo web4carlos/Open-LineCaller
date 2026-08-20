@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +92,62 @@ def _parse_image_points(raw: str, image_size: tuple[int, int]) -> tuple[tuple[fl
     return tuple(points)
 
 
+def _parse_interactive_quad(
+    raw: str,
+    image_size: tuple[int, int],
+) -> tuple[tuple[tuple[float, float], ...], int]:
+    # Interactive handles may represent a mathematical court corner that is
+    # outside the camera image. The legacy visible-corner mode remains strict.
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("quad_points must be valid JSON") from exc
+
+    if not isinstance(value, list) or len(value) != 4:
+        raise ValueError(
+            "quad_points must contain 4 corners: "
+            "near-left, near-right, far-right, far-left"
+        )
+
+    width, height = image_size
+    diagonal = math.hypot(width, height)
+    max_extension = 1.5 * diagonal
+    points: list[tuple[float, float]] = []
+    offscreen = 0
+
+    for index, item in enumerate(value):
+        if not isinstance(item, list) or len(item) != 2:
+            raise ValueError(f"quad corner {index + 1} must contain x,y")
+        x, y = float(item[0]), float(item[1])
+        if not (math.isfinite(x) and math.isfinite(y)):
+            raise ValueError(f"quad corner {index + 1} is not finite")
+
+        dx = 0.0 if 0.0 <= x <= width else (-x if x < 0.0 else x - width)
+        dy = 0.0 if 0.0 <= y <= height else (-y if y < 0.0 else y - height)
+        if math.hypot(dx, dy) > max_extension:
+            raise ValueError(
+                f"quad corner {index + 1} is implausibly far outside the frame"
+            )
+        if not (0.0 <= x < width and 0.0 <= y < height):
+            offscreen += 1
+        points.append((x, y))
+
+    polygon = np.asarray(points, dtype=np.float32)
+    if abs(float(cv2.contourArea(polygon))) < max(250.0, 0.002 * width * height):
+        raise ValueError("Interactive court quadrilateral is too small")
+    if not cv2.isContourConvex(np.rint(polygon).astype(np.int32)):
+        raise ValueError(
+            "Interactive court corners cross. Keep order: "
+            "near-left -> near-right -> far-right -> far-left"
+        )
+
+    for i in range(4):
+        if math.dist(points[i], points[(i + 1) % 4]) < 8.0:
+            raise ValueError("Two adjacent court handles are too close together")
+
+    return tuple(points), offscreen
+
+
 def _summary_dict(registry: Any) -> dict[str, Any]:
     registry.sync_runtime_summary()
     summary = registry.summary
@@ -146,6 +203,7 @@ def register_wizard_routes(app: Any, registry: Any, runtime_upload_dir: Path) ->
         background: UploadFile = File(...),
         image_points: str | None = Form(None),
         boundary_lines: str | None = Form(None),
+        quad_points: str | None = Form(None),
         coverage: str = Form("FULL_COURT"),
         margin_bu: float = Form(10.0),
     ) -> dict[str, Any]:
@@ -154,7 +212,13 @@ def register_wizard_routes(app: Any, registry: Any, runtime_upload_dir: Path) ->
             height, width = bgr.shape[:2]
             size = (int(width), int(height))
 
-            if boundary_lines:
+            if quad_points:
+                points, offscreen_corners = _parse_interactive_quad(
+                    quad_points,
+                    size,
+                )
+                calibration_method = "INTERACTIVE_QUAD"
+            elif boundary_lines:
                 parsed_lines = parse_boundary_lines_json(boundary_lines, size)
                 inference = infer_court_corners_from_boundary_lines(parsed_lines, size)
                 points = inference.image_points
@@ -166,7 +230,8 @@ def register_wizard_routes(app: Any, registry: Any, runtime_upload_dir: Path) ->
                 offscreen_corners = 0
             else:
                 raise ValueError(
-                    "Provide image_points or boundary_lines calibration evidence"
+                    "Provide quad_points, image_points or boundary_lines "
+                    "calibration evidence"
                 )
 
             mode = CalibrationCoverage.parse(coverage)
