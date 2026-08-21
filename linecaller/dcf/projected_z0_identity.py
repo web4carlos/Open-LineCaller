@@ -15,6 +15,7 @@ from linecaller.dcf.external_grid_frame_loop import (
     ExternalGridFrameLoop,
     LockedBallColorProfile,
     Z0Candidate,
+    rasterized_scale_compatible,
 )
 
 
@@ -163,7 +164,12 @@ class ProjectedZ0SignatureBank:
             distance_px = math.dist(candidate.centroid_xy, signature.image_xy)
             distance_bu = distance_px / expected
             scale_ratio = float(candidate.observed_scale_px) / expected
-            if not (self.min_scale_ratio <= scale_ratio <= self.max_scale_ratio):
+            if not rasterized_scale_compatible(
+                candidate.observed_scale_px,
+                expected,
+                self.min_scale_ratio,
+                self.max_scale_ratio,
+            ):
                 continue
             if distance_bu > self.max_anchor_distance_bu:
                 continue

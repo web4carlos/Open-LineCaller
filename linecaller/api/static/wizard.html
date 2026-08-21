@@ -418,6 +418,16 @@
         <div class="stat"><span>Allowed error px</span><b id="approachAllowedError">-</b></div>
         <div class="stat"><span>Candidate cell</span><b id="candidateCell">-</b></div>
         <div class="stat"><span>Projected anchor</span><b id="projectedAnchor">-</b></div>
+        <div class="stat"><span>Ext cell hits</span><b id="extCellHits">0</b></div>
+        <div class="stat"><span>Raw Z0 total</span><b id="rawZ0Total">0</b></div>
+        <div class="stat"><span>Scale low</span><b id="scaleLow">0</b></div>
+        <div class="stat"><span>Scale high</span><b id="scaleHigh">0</b></div>
+        <div class="stat"><span>Raster accepts</span><b id="rasterAccepts">0</b></div>
+        <div class="stat"><span>Scale reason</span><b id="scaleReason">-</b></div>
+        <div class="stat"><span>Scale cell</span><b id="scaleCell">-</b></div>
+        <div class="stat"><span>Observed px</span><b id="scaleObserved">-</b></div>
+        <div class="stat"><span>Expected px</span><b id="scaleExpected">-</b></div>
+        <div class="stat"><span>Scale ratio</span><b id="scaleRatio">-</b></div>
         <div class="stat"><span>Z0 total</span><b id="z0Total">0</b></div>
         <div class="stat"><span>UP total</span><b id="upTotal">0</b></div>
         <div class="stat"><span>OUT total</span><b id="outTotal">0</b></div>
@@ -553,18 +563,24 @@
       contactRecoveriesTotal:0, lastRecovery:null,
       lastApproachReason:null, lastCandidateCell:null,
       lastProjectedAnchor:null,
+      extCellHitsTotal:0, rawZ0Total:0,
+      scaleLowTotal:0, scaleHighTotal:0, rasterAcceptsTotal:0,
+      lastScaleReason:null, lastScaleCell:null,
+      lastScaleObserved:null, lastScaleExpected:null, lastScaleRatio:null,
       lastZ0:null, lastOut:null, events:[]
     };
     for (const id of ['ballPixels','rawBlobs','footprints','blurMerges',
                       'projMatches','projRejects','approachRejects','motionObs',
-                      'contactRecoveries',
+                      'contactRecoveries','extCellHits','rawZ0Total',
+                      'scaleLow','scaleHigh','rasterAccepts',
                       'z0Total','upTotal','outTotal','lineGuards']) {
       $(id).textContent='0';
     }
     for (const id of ['lastZ0','lastOut','predCell','recoveryFrame',
                       'approachReason','approachMotion','approachMinMotion',
                       'approachPredError','approachAllowedError',
-                      'candidateCell','projectedAnchor']) {
+                      'candidateCell','projectedAnchor','scaleReason',
+                      'scaleCell','scaleObserved','scaleExpected','scaleRatio']) {
       $(id).textContent='-';
     }
     $('eventLog').textContent='No events yet.';
@@ -649,6 +665,104 @@
           ` predErr=${$('approachPredError').textContent}/${$('approachAllowedError').textContent}px`
         );
       }
+    }
+
+    const extHits = Number(d.external_cell_component_hits || 0);
+    const rawZ0 = Number(d.raw_z0_candidates || 0);
+    const scaleLow = Number(d.scale_low_rejections || 0);
+    const scaleHigh = Number(d.scale_high_rejections || 0);
+    const rasterAccepts = Number(d.scale_quantized_accepts || 0);
+
+    telemetry.extCellHitsTotal += extHits;
+    telemetry.rawZ0Total += rawZ0;
+    telemetry.scaleLowTotal += scaleLow;
+    telemetry.scaleHighTotal += scaleHigh;
+    telemetry.rasterAcceptsTotal += rasterAccepts;
+
+    $('extCellHits').textContent = telemetry.extCellHitsTotal;
+    $('rawZ0Total').textContent = telemetry.rawZ0Total;
+    $('scaleLow').textContent = telemetry.scaleLowTotal;
+    $('scaleHigh').textContent = telemetry.scaleHighTotal;
+    $('rasterAccepts').textContent = telemetry.rasterAcceptsTotal;
+
+    if (d.scale_diag_reason) {
+      telemetry.lastScaleReason = d.scale_diag_reason;
+      telemetry.lastScaleCell = d.scale_diag_cell;
+      telemetry.lastScaleObserved = d.scale_diag_observed_px;
+      telemetry.lastScaleExpected = d.scale_diag_expected_px;
+      telemetry.lastScaleRatio = d.scale_diag_ratio;
+      $('scaleReason').textContent = String(d.scale_diag_reason);
+      $('scaleCell').textContent =
+        (d.scale_diag_cell === null || d.scale_diag_cell === undefined)
+          ? '-' : String(d.scale_diag_cell);
+      $('scaleObserved').textContent =
+        (d.scale_diag_observed_px === null ||
+         d.scale_diag_observed_px === undefined)
+          ? '-' : Number(d.scale_diag_observed_px).toFixed(2);
+      $('scaleExpected').textContent =
+        (d.scale_diag_expected_px === null ||
+         d.scale_diag_expected_px === undefined)
+          ? '-' : Number(d.scale_diag_expected_px).toFixed(2);
+      $('scaleRatio').textContent =
+        (d.scale_diag_ratio === null || d.scale_diag_ratio === undefined)
+          ? '-' : Number(d.scale_diag_ratio).toFixed(3);
+    }
+
+    if (rasterAccepts > 0) {
+      appendTelemetryEvent(
+        `${videoFrameNo} RASTER_SCALE_ACCEPT x${rasterAccepts}` +
+        ` cell=${$('scaleCell').textContent}` +
+        ` obs/exp=${$('scaleObserved').textContent}/${$('scaleExpected').textContent}px`
+      );
+    }
+
+    const extHits = Number(d.external_cell_component_hits || 0);
+    const rawZ0 = Number(d.raw_z0_candidates || 0);
+    const scaleLow = Number(d.scale_low_rejections || 0);
+    const scaleHigh = Number(d.scale_high_rejections || 0);
+    const rasterAccepts = Number(d.scale_quantized_accepts || 0);
+
+    telemetry.extCellHitsTotal += extHits;
+    telemetry.rawZ0Total += rawZ0;
+    telemetry.scaleLowTotal += scaleLow;
+    telemetry.scaleHighTotal += scaleHigh;
+    telemetry.rasterAcceptsTotal += rasterAccepts;
+
+    $('extCellHits').textContent = telemetry.extCellHitsTotal;
+    $('rawZ0Total').textContent = telemetry.rawZ0Total;
+    $('scaleLow').textContent = telemetry.scaleLowTotal;
+    $('scaleHigh').textContent = telemetry.scaleHighTotal;
+    $('rasterAccepts').textContent = telemetry.rasterAcceptsTotal;
+
+    if (d.scale_diag_reason) {
+      telemetry.lastScaleReason = d.scale_diag_reason;
+      telemetry.lastScaleCell = d.scale_diag_cell;
+      telemetry.lastScaleObserved = d.scale_diag_observed_px;
+      telemetry.lastScaleExpected = d.scale_diag_expected_px;
+      telemetry.lastScaleRatio = d.scale_diag_ratio;
+      $('scaleReason').textContent = String(d.scale_diag_reason);
+      $('scaleCell').textContent =
+        (d.scale_diag_cell === null || d.scale_diag_cell === undefined)
+          ? '-' : String(d.scale_diag_cell);
+      $('scaleObserved').textContent =
+        (d.scale_diag_observed_px === null ||
+         d.scale_diag_observed_px === undefined)
+          ? '-' : Number(d.scale_diag_observed_px).toFixed(2);
+      $('scaleExpected').textContent =
+        (d.scale_diag_expected_px === null ||
+         d.scale_diag_expected_px === undefined)
+          ? '-' : Number(d.scale_diag_expected_px).toFixed(2);
+      $('scaleRatio').textContent =
+        (d.scale_diag_ratio === null || d.scale_diag_ratio === undefined)
+          ? '-' : Number(d.scale_diag_ratio).toFixed(3);
+    }
+
+    if (rasterAccepts > 0) {
+      appendTelemetryEvent(
+        `${videoFrameNo} RASTER_SCALE_ACCEPT x${rasterAccepts}` +
+        ` cell=${$('scaleCell').textContent}` +
+        ` obs/exp=${$('scaleObserved').textContent}/${$('scaleExpected').textContent}px`
+      );
     }
 
     const z0n = Number(d.z0_candidates || 0);

@@ -277,6 +277,8 @@ def health() -> dict[str, Any]:
         "ball_identity_feature_version": "CP-0036.2.4",
         "contact_recovery_feature_version": "CP-0036.2.4.2",
         "wizard_session_feature_version": "CP-0036.2.4.3",
+        "tiny_ball_scale_feature_version": "CP-0036.2.4.4",
+        "tiny_ball_scale_feature_version": "CP-0036.2.4.4",
         "configured": registry.runtime is not None,
     }
 
@@ -472,6 +474,18 @@ async def process_frame(
         payload["contact_recoveries"] = loop.contact_recoveries
         payload["contact_recovery_frame"] = loop.contact_recovery_frame
         payload["contact_recovery_cell"] = loop.contact_recovery_cell
+        payload["external_cell_component_hits"] = (
+            loop.external_cell_component_hits
+        )
+        payload["raw_z0_candidates"] = loop.raw_z0_candidates
+        payload["scale_low_rejections"] = loop.scale_low_rejections
+        payload["scale_high_rejections"] = loop.scale_high_rejections
+        payload["scale_quantized_accepts"] = loop.scale_quantized_accepts
+        payload["scale_diag_reason"] = loop.scale_diag_reason
+        payload["scale_diag_cell"] = loop.scale_diag_cell
+        payload["scale_diag_observed_px"] = loop.scale_diag_observed_px
+        payload["scale_diag_expected_px"] = loop.scale_diag_expected_px
+        payload["scale_diag_ratio"] = loop.scale_diag_ratio
         payload["z0_candidates"] = len(loop.z0_candidates)
         payload["up_confirmations"] = len(loop.up_confirmations)
         payload["z0_events"] = [
@@ -523,6 +537,16 @@ async def process_frame(
         payload["contact_recoveries"] = 0
         payload["contact_recovery_frame"] = None
         payload["contact_recovery_cell"] = None
+        payload["external_cell_component_hits"] = 0
+        payload["raw_z0_candidates"] = 0
+        payload["scale_low_rejections"] = 0
+        payload["scale_high_rejections"] = 0
+        payload["scale_quantized_accepts"] = 0
+        payload["scale_diag_reason"] = None
+        payload["scale_diag_cell"] = None
+        payload["scale_diag_observed_px"] = None
+        payload["scale_diag_expected_px"] = None
+        payload["scale_diag_ratio"] = None
         payload["z0_candidates"] = 0
         payload["up_confirmations"] = 0
         payload["z0_events"] = []

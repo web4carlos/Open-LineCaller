@@ -13,6 +13,7 @@ from linecaller.dcf.external_grid_frame_loop import (
     ExternalFrameResult,
     ExternalGridFrameLoop,
     Z0Candidate,
+    rasterized_scale_compatible,
 )
 from linecaller.dcf.projected_z0_identity import (
     ApproachEvidence,
@@ -353,10 +354,11 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
 
             scale = float(min(rw, rh))
             scale_ratio = scale / expected
-            if not (
-                self.min_floor_scale_ratio
-                <= scale_ratio
-                <= self.max_floor_scale_ratio
+            if not rasterized_scale_compatible(
+                scale,
+                expected,
+                self.min_floor_scale_ratio,
+                self.max_floor_scale_ratio,
             ):
                 continue
 

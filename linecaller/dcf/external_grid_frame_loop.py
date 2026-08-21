@@ -286,6 +286,74 @@ class ExternalGridCalibrator:
         )
 
 
+def rasterized_scale_bounds_px(
+    expected_px: float,
+    min_ratio: float,
+    max_ratio: float,
+    *,
+    tiny_expected_threshold_px: float = 3.0,
+    quantization_tolerance_px: float = 0.5,
+) -> tuple[float, float]:
+    # CP-0036.2.4.4: only tiny projected balls receive integer-raster allowance.
+    expected = max(0.5, float(expected_px))
+    lo = float(min_ratio) * expected
+    hi = float(max_ratio) * expected
+    if expected < float(tiny_expected_threshold_px):
+        q = max(0.0, float(quantization_tolerance_px))
+        lo = max(0.0, lo - q)
+        hi = hi + q
+    return float(lo), float(hi)
+
+
+def rasterized_scale_compatible(
+    observed_px: float,
+    expected_px: float,
+    min_ratio: float,
+    max_ratio: float,
+) -> bool:
+    lo, hi = rasterized_scale_bounds_px(
+        expected_px,
+        min_ratio,
+        max_ratio,
+    )
+    observed = float(observed_px)
+    return lo <= observed <= hi
+
+
+def rasterized_scale_bounds_px(
+    expected_px: float,
+    min_ratio: float,
+    max_ratio: float,
+    *,
+    tiny_expected_threshold_px: float = 3.0,
+    quantization_tolerance_px: float = 0.5,
+) -> tuple[float, float]:
+    # CP-0036.2.4.4: only tiny projected balls receive integer-raster allowance.
+    expected = max(0.5, float(expected_px))
+    lo = float(min_ratio) * expected
+    hi = float(max_ratio) * expected
+    if expected < float(tiny_expected_threshold_px):
+        q = max(0.0, float(quantization_tolerance_px))
+        lo = max(0.0, lo - q)
+        hi = hi + q
+    return float(lo), float(hi)
+
+
+def rasterized_scale_compatible(
+    observed_px: float,
+    expected_px: float,
+    min_ratio: float,
+    max_ratio: float,
+) -> bool:
+    lo, hi = rasterized_scale_bounds_px(
+        expected_px,
+        min_ratio,
+        max_ratio,
+    )
+    observed = float(observed_px)
+    return lo <= observed <= hi
+
+
 @dataclass(frozen=True)
 class LockedBallColorProfile:
     hue_center: float
@@ -414,6 +482,26 @@ class ExternalFrameResult:
     contact_recoveries: int = 0
     contact_recovery_frame: int | None = None
     contact_recovery_cell: int | None = None
+    external_cell_component_hits: int = 0
+    raw_z0_candidates: int = 0
+    scale_low_rejections: int = 0
+    scale_high_rejections: int = 0
+    scale_quantized_accepts: int = 0
+    scale_diag_reason: str | None = None
+    scale_diag_cell: int | None = None
+    scale_diag_observed_px: float | None = None
+    scale_diag_expected_px: float | None = None
+    scale_diag_ratio: float | None = None
+    external_cell_component_hits: int = 0
+    raw_z0_candidates: int = 0
+    scale_low_rejections: int = 0
+    scale_high_rejections: int = 0
+    scale_quantized_accepts: int = 0
+    scale_diag_reason: str | None = None
+    scale_diag_cell: int | None = None
+    scale_diag_observed_px: float | None = None
+    scale_diag_expected_px: float | None = None
+    scale_diag_ratio: float | None = None
 
     @property
     def bingo_cells(self) -> tuple[UpConfirmation, ...]:
@@ -503,6 +591,8 @@ class ExternalGridFrameLoop:
 
         self._pending: list[_PendingZ0] = []
         self._last_bingo_frame_by_cell: dict[int, int] = {}
+        self._reset_pre_z0_telemetry()
+        self._reset_pre_z0_telemetry()
 
     def _components(self, current: Image.Image) -> tuple[np.ndarray, np.ndarray, list[BallComponent]]:
         # PILLOW happens only after FRAME arrives. The comparison is ALWAYS
@@ -648,11 +738,68 @@ class ExternalGridFrameLoop:
 
         return math.hypot(dx, dy)
 
+    def _reset_pre_z0_telemetry(self) -> None:
+        self._last_external_cell_component_hits = 0
+        self._last_raw_z0_candidates = 0
+        self._last_scale_low_rejections = 0
+        self._last_scale_high_rejections = 0
+        self._last_scale_quantized_accepts = 0
+        self._last_scale_diag_reason: str | None = None
+        self._last_scale_diag_cell: int | None = None
+        self._last_scale_diag_observed_px: float | None = None
+        self._last_scale_diag_expected_px: float | None = None
+        self._last_scale_diag_ratio: float | None = None
+
+    def _record_scale_diagnostic(
+        self,
+        *,
+        reason: str,
+        cell_id: int,
+        observed_px: float,
+        expected_px: float,
+        ratio: float,
+    ) -> None:
+        priority = {
+            "QUANTIZED_ACCEPT": 3,
+            "SCALE_HIGH": 2,
+            "SCALE_LOW": 1,
+        }
+        current_priority = priority.get(self._last_scale_diag_reason or "", 0)
+        incoming_priority = priority.get(str(reason), 0)
+        if incoming_priority < current_priority:
+            return
+        if (
+            incoming_priority == current_priority
+            and self._last_scale_diag_ratio is not None
+        ):
+            current_distance = min(
+                abs(
+                    self._last_scale_diag_ratio
+                    - self.min_floor_scale_ratio
+                ),
+                abs(
+                    self._last_scale_diag_ratio
+                    - self.max_floor_scale_ratio
+                ),
+            )
+            incoming_distance = min(
+                abs(float(ratio) - self.min_floor_scale_ratio),
+                abs(float(ratio) - self.max_floor_scale_ratio),
+            )
+            if incoming_distance > current_distance:
+                return
+        self._last_scale_diag_reason = str(reason)
+        self._last_scale_diag_cell = int(cell_id)
+        self._last_scale_diag_observed_px = float(observed_px)
+        self._last_scale_diag_expected_px = float(expected_px)
+        self._last_scale_diag_ratio = float(ratio)
+
     def _find_z0_candidates(
         self,
         frame_no: int,
         components: list[BallComponent],
     ) -> tuple[list[Z0Candidate], int]:
+        self._reset_pre_z0_telemetry()
         candidates: list[Z0Candidate] = []
         boundary_guard_rejections = 0
         # Required architecture: fixed EXTERNAL CELL LOOP. Cells watch
@@ -666,10 +813,52 @@ class ExternalGridFrameLoop:
                     continue
                 if cv2.pointPolygonTest(poly, (cx, cy), False) < 0:
                     continue
-                expected = max(0.5, float(cell.expected_floor_ball_diameter_px))
-                ratio = comp.scale_px / expected
-                if not (self.min_floor_scale_ratio <= ratio <= self.max_floor_scale_ratio):
+                self._last_external_cell_component_hits += 1
+                expected = max(
+                    0.5,
+                    float(cell.expected_floor_ball_diameter_px),
+                )
+                observed = float(comp.scale_px)
+                ratio = observed / expected
+                legacy_compatible = (
+                    self.min_floor_scale_ratio
+                    <= ratio
+                    <= self.max_floor_scale_ratio
+                )
+                min_px, max_px = rasterized_scale_bounds_px(
+                    expected,
+                    self.min_floor_scale_ratio,
+                    self.max_floor_scale_ratio,
+                )
+                if observed < min_px:
+                    self._last_scale_low_rejections += 1
+                    self._record_scale_diagnostic(
+                        reason="SCALE_LOW",
+                        cell_id=cell.cell_id,
+                        observed_px=observed,
+                        expected_px=expected,
+                        ratio=ratio,
+                    )
                     continue
+                if observed > max_px:
+                    self._last_scale_high_rejections += 1
+                    self._record_scale_diagnostic(
+                        reason="SCALE_HIGH",
+                        cell_id=cell.cell_id,
+                        observed_px=observed,
+                        expected_px=expected,
+                        ratio=ratio,
+                    )
+                    continue
+                if not legacy_compatible:
+                    self._last_scale_quantized_accepts += 1
+                    self._record_scale_diagnostic(
+                        reason="QUANTIZED_ACCEPT",
+                        cell_id=cell.cell_id,
+                        observed_px=observed,
+                        expected_px=expected,
+                        ratio=ratio,
+                    )
 
                 floor_xy = self._image_point_to_floor_bu(cx, cy)
                 clearance = self._outside_clearance_bu(*floor_xy)
@@ -692,7 +881,14 @@ class ExternalGridFrameLoop:
                     )
                 )
                 break
-        candidates.sort(key=lambda c: (abs(c.scale_ratio - 1.0), -c.color_pixels, c.cell_id))
+        candidates.sort(
+            key=lambda c: (
+                abs(c.scale_ratio - 1.0),
+                -c.color_pixels,
+                c.cell_id,
+            )
+        )
+        self._last_raw_z0_candidates = len(candidates)
         return candidates, boundary_guard_rejections
 
     def _confirm_up(self, frame_no: int, components: list[BallComponent]) -> list[UpConfirmation]:
@@ -809,4 +1005,18 @@ class ExternalGridFrameLoop:
                 1 for component in components if component.merged_from > 1
             ),
             boundary_guard_rejections=int(boundary_guard_rejections),
+            external_cell_component_hits=int(
+                self._last_external_cell_component_hits
+            ),
+            raw_z0_candidates=int(self._last_raw_z0_candidates),
+            scale_low_rejections=int(self._last_scale_low_rejections),
+            scale_high_rejections=int(self._last_scale_high_rejections),
+            scale_quantized_accepts=int(
+                self._last_scale_quantized_accepts
+            ),
+            scale_diag_reason=self._last_scale_diag_reason,
+            scale_diag_cell=self._last_scale_diag_cell,
+            scale_diag_observed_px=self._last_scale_diag_observed_px,
+            scale_diag_expected_px=self._last_scale_diag_expected_px,
+            scale_diag_ratio=self._last_scale_diag_ratio,
         )
