@@ -17,6 +17,7 @@ from linecaller.api.boundary_calibration import (
 )
 from linecaller.dcf.external_grid_frame_loop import (
     CalibrationCoverage,
+    ExternalGridCalibration,
     ExternalGridCalibrator,
     ExternalGridConfig,
 )
@@ -33,6 +34,9 @@ class WizardState:
     image_points: tuple[tuple[float, float], ...] = ()
     calibration_method: str | None = None
     offscreen_corners: int = 0
+    restore_available: bool = False
+    persisted_session: bool = False
+    restore_error: str | None = None
 
     def reset(self) -> None:
         self.calibration_path = None
@@ -44,9 +48,202 @@ class WizardState:
         self.image_points = ()
         self.calibration_method = None
         self.offscreen_corners = 0
+        self.restore_available = False
+        self.persisted_session = False
+        self.restore_error = None
 
 
 wizard_state = WizardState()
+
+_CALIBRATION_NAME = "EXTERNAL_GRID_CALIBRATION.json"
+_BACKGROUND_NAME = "EXTERNAL_GRID_BACKGROUND.png"
+_BALL_NAME = "BALL_TEMPLATE.png"
+_SESSION_NAME = "WIZARD_SESSION.json"
+_SESSION_VERSION = 1
+
+
+def _artifact_paths(wizard_dir: Path) -> dict[str, Path]:
+    root = Path(wizard_dir)
+    return {
+        "calibration": root / _CALIBRATION_NAME,
+        "background": root / _BACKGROUND_NAME,
+        "ball": root / _BALL_NAME,
+        "session": root / _SESSION_NAME,
+    }
+
+
+def _load_session_manifest(wizard_dir: Path) -> dict[str, Any] | None:
+    path = _artifact_paths(wizard_dir)["session"]
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Unable to read persistent Wizard session: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("Persistent Wizard session must be a JSON object")
+    if int(data.get("version", 0)) != _SESSION_VERSION:
+        raise ValueError("Persistent Wizard session version is unsupported")
+    zones = data.get("zones")
+    if not isinstance(zones, list) or not zones:
+        raise ValueError("Persistent Wizard session has no camera-owned zones")
+    return data
+
+
+def _save_session_manifest(
+    wizard_dir: Path,
+    *,
+    camera_id: str,
+    mount_position: str,
+    zones: list[str] | tuple[str, ...],
+    receiving_side: str,
+    depth_bu: float,
+) -> Path:
+    root = Path(wizard_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    path = _artifact_paths(root)["session"]
+    payload = {
+        "version": _SESSION_VERSION,
+        "camera_id": str(camera_id).strip() or "video-camera-01",
+        "mount_position": str(mount_position).strip().upper(),
+        "zones": [str(z).strip().upper() for z in zones if str(z).strip()],
+        "receiving_side": str(receiving_side).strip().upper(),
+        "depth_bu": float(depth_bu),
+    }
+    if not payload["zones"]:
+        raise ValueError("Persistent Wizard session requires at least one zone")
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
+def _offscreen_count(
+    points: tuple[tuple[float, float], ...],
+    image_size: tuple[int, int],
+) -> int:
+    width, height = image_size
+    return sum(
+        1
+        for x, y in points
+        if not (0.0 <= float(x) < width and 0.0 <= float(y) < height)
+    )
+
+
+def _restore_wizard_state_from_disk(wizard_dir: Path) -> bool:
+    paths = _artifact_paths(wizard_dir)
+    wizard_state.restore_error = None
+    if not paths["calibration"].exists() or not paths["background"].exists():
+        wizard_state.restore_available = False
+        wizard_state.persisted_session = False
+        return False
+
+    calibration = ExternalGridCalibration.load(paths["calibration"])
+    image_size = tuple(int(v) for v in calibration.image_size)
+    points = tuple((float(p[0]), float(p[1])) for p in calibration.image_points)
+
+    wizard_state.calibration_path = paths["calibration"].resolve()
+    wizard_state.background_path = paths["background"].resolve()
+    wizard_state.ball_template_path = (
+        paths["ball"].resolve() if paths["ball"].exists() else None
+    )
+    wizard_state.image_size = image_size
+    wizard_state.coverage = str(calibration.coverage)
+    wizard_state.external_cells = len(calibration.cells)
+    wizard_state.image_points = points
+    wizard_state.calibration_method = "PERSISTED"
+    wizard_state.offscreen_corners = _offscreen_count(points, image_size)
+    wizard_state.restore_available = wizard_state.ball_template_path is not None
+    wizard_state.persisted_session = paths["session"].exists()
+    return wizard_state.restore_available
+
+
+def _settings_from_manifest(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "camera_id": str(data.get("camera_id") or "video-camera-01"),
+        "mount_position": str(data.get("mount_position") or "NET_CENTER").upper(),
+        "zones": [
+            str(z).strip().upper()
+            for z in data.get("zones", [])
+            if str(z).strip()
+        ],
+        "receiving_side": str(data.get("receiving_side") or "FAR").upper(),
+        "depth_bu": float(data.get("depth_bu", 6.0)),
+    }
+
+
+def _restore_registry(
+    registry: Any,
+    wizard_dir: Path,
+    *,
+    camera_id: str,
+    mount_position: str,
+    zones: list[str] | tuple[str, ...],
+    receiving_side: str,
+    depth_bu: float,
+    persist: bool,
+) -> None:
+    if not _restore_wizard_state_from_disk(wizard_dir):
+        raise ValueError(
+            "No complete previous Wizard calibration was found "
+            "(court + background + ball are required)"
+        )
+    if wizard_state.calibration_path is None:
+        raise ValueError("Persistent calibration path is missing")
+    if wizard_state.background_path is None:
+        raise ValueError("Persistent background path is missing")
+    if wizard_state.ball_template_path is None:
+        raise ValueError("Persistent ball template is missing")
+
+    zone_list = [str(token).strip().upper() for token in zones if str(token).strip()]
+    if not zone_list:
+        raise ValueError("Select at least one camera-owned external zone")
+
+    registry.configure_paths(
+        calibration_path=wizard_state.calibration_path,
+        ball_template_path=wizard_state.ball_template_path,
+        background_path=wizard_state.background_path,
+        camera_id=str(camera_id).strip() or "video-camera-01",
+        mount_position=str(mount_position).strip().upper(),
+        zones=zone_list,
+        receiving_side=str(receiving_side).strip().upper(),
+        depth_bu=float(depth_bu),
+    )
+    if persist:
+        _save_session_manifest(
+            wizard_dir,
+            camera_id=str(camera_id).strip() or "video-camera-01",
+            mount_position=str(mount_position).strip().upper(),
+            zones=zone_list,
+            receiving_side=str(receiving_side).strip().upper(),
+            depth_bu=float(depth_bu),
+        )
+    wizard_state.restore_available = True
+    wizard_state.persisted_session = True
+    wizard_state.restore_error = None
+
+
+def _try_auto_restore(registry: Any, wizard_dir: Path) -> bool:
+    try:
+        available = _restore_wizard_state_from_disk(wizard_dir)
+        if not available:
+            return False
+        manifest = _load_session_manifest(wizard_dir)
+        if manifest is None:
+            # Legacy CP-0036 sessions have the three artifacts but no manifest.
+            # The UI offers one-click Resume and persists ownership for later.
+            wizard_state.persisted_session = False
+            return False
+        _restore_registry(
+            registry,
+            wizard_dir,
+            persist=False,
+            **_settings_from_manifest(manifest),
+        )
+        return True
+    except (ValueError, OSError) as exc:
+        wizard_state.restore_error = str(exc)
+        return False
 
 
 def _decode_upload(upload: UploadFile, label: str) -> tuple[np.ndarray, Image.Image]:
@@ -168,6 +365,9 @@ def _summary_dict(registry: Any) -> dict[str, Any]:
             "image_points": [list(p) for p in wizard_state.image_points],
             "calibration_method": wizard_state.calibration_method,
             "offscreen_corners": wizard_state.offscreen_corners,
+            "restore_available": wizard_state.restore_available,
+            "persisted_session": wizard_state.persisted_session,
+            "restore_error": wizard_state.restore_error,
         },
     }
 
@@ -176,12 +376,21 @@ def register_wizard_routes(app: Any, registry: Any, runtime_upload_dir: Path) ->
     router = APIRouter(prefix="/api/wizard", tags=["live-wizard"])
     wizard_dir = Path(runtime_upload_dir) / "wizard"
 
+    # Best effort only: corrupt/incomplete saved state must never stop API boot.
+    _try_auto_restore(registry, wizard_dir)
+
     @router.get("/status")
     def status() -> dict[str, Any]:
         return _summary_dict(registry)
 
     @router.post("/reset")
     def reset() -> dict[str, Any]:
+        # Explicit reset must not resurrect this calibration next boot.
+        for path in _artifact_paths(wizard_dir).values():
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
         wizard_state.reset()
         registry.runtime = None
         registry._frame_no = 0
@@ -197,6 +406,41 @@ def register_wizard_routes(app: Any, registry: Any, runtime_upload_dir: Path) ->
         registry.summary.active_external_cells = 0
         registry.summary.pose_epoch = 0
         return _summary_dict(registry)
+
+    @router.post("/restore")
+    def restore_previous_session(
+        camera_id: str = Form("video-camera-01"),
+        mount_position: str = Form("NET_CENTER"),
+        zones: str = Form(
+            "FAR_LEFT,FAR_BASELINE,FAR_RIGHT,"
+            "NEAR_LEFT,NEAR_BASELINE,NEAR_RIGHT"
+        ),
+        receiving_side: str = Form("FAR"),
+        depth_bu: float = Form(6.0),
+    ) -> dict[str, Any]:
+        try:
+            zone_list = [
+                token.strip().upper()
+                for token in zones.split(",")
+                if token.strip()
+            ]
+            _restore_registry(
+                registry,
+                wizard_dir,
+                camera_id=camera_id,
+                mount_position=mount_position,
+                zones=zone_list,
+                receiving_side=receiving_side,
+                depth_bu=float(depth_bu),
+                persist=True,
+            )
+            result = _summary_dict(registry)
+            result["ok"] = True
+            result["restored"] = True
+            result["next"] = "READY"
+            return result
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.post("/calibrate")
     def calibrate(
@@ -240,9 +484,13 @@ def register_wizard_routes(app: Any, registry: Any, runtime_upload_dir: Path) ->
                 raise ValueError("margin_bu must be > 0")
 
             wizard_dir.mkdir(parents=True, exist_ok=True)
-            background_path = wizard_dir / "EXTERNAL_GRID_BACKGROUND.png"
-            calibration_path = wizard_dir / "EXTERNAL_GRID_CALIBRATION.json"
+            paths = _artifact_paths(wizard_dir)
+            background_path = paths["background"]
+            calibration_path = paths["calibration"]
 
+            # New court geometry invalidates the old ball + ownership manifest.
+            paths["ball"].unlink(missing_ok=True)
+            paths["session"].unlink(missing_ok=True)
             rgb_image.save(background_path, format="PNG")
 
             builder = ExternalGridCalibrator(
@@ -270,6 +518,9 @@ def register_wizard_routes(app: Any, registry: Any, runtime_upload_dir: Path) ->
             wizard_state.image_points = points
             wizard_state.calibration_method = calibration_method
             wizard_state.offscreen_corners = offscreen_corners
+            wizard_state.restore_available = False
+            wizard_state.persisted_session = False
+            wizard_state.restore_error = None
 
             # Court geometry changed: old runtime must not continue.
             registry.runtime = None
@@ -334,7 +585,7 @@ def register_wizard_routes(app: Any, registry: Any, runtime_upload_dir: Path) ->
                 raise ValueError("Ball selection is too close to the frame edge")
 
             wizard_dir.mkdir(parents=True, exist_ok=True)
-            ball_path = wizard_dir / "BALL_TEMPLATE.png"
+            ball_path = _artifact_paths(wizard_dir)["ball"]
             rgb_image.crop((x0, y0, x1, y1)).save(
                 ball_path,
                 format="PNG",
@@ -359,6 +610,17 @@ def register_wizard_routes(app: Any, registry: Any, runtime_upload_dir: Path) ->
                 receiving_side=receiving_side,
                 depth_bu=float(depth_bu),
             )
+            _save_session_manifest(
+                wizard_dir,
+                camera_id=camera_id,
+                mount_position=mount_position,
+                zones=zone_list,
+                receiving_side=receiving_side,
+                depth_bu=float(depth_bu),
+            )
+            wizard_state.restore_available = True
+            wizard_state.persisted_session = True
+            wizard_state.restore_error = None
             result = _summary_dict(registry)
             result["ok"] = True
             result["next"] = "READY"

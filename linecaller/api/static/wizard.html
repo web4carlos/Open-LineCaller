@@ -156,6 +156,17 @@
       border-left:3px solid #3b719e; padding:7px 9px; margin-top:8px;
       color:#9db3c7; font-size:10px; line-height:1.5;
     }
+    .resume-session {
+      margin-top:9px; padding:9px;
+      border:1px solid #6d5728; border-radius:9px;
+      background:#17140c;
+    }
+    .resume-session strong {
+      display:block; color:#ffd98a; font-size:11px; margin-bottom:4px;
+    }
+    .resume-session span {
+      display:block; color:#b9aa87; font-size:10px; line-height:1.45;
+    }
     .quad-note {
       padding:8px 9px; margin-top:8px; border-radius:8px;
       background:#0a1118; border:1px solid #25384a;
@@ -211,6 +222,11 @@
         </div>
         <div class="mode-note">
           Analysis mode does not skip video frames: it seeks through the video one frame at a time using Analysis FPS.
+        </div>
+        <div id="resumeBox" class="resume-session" style="display:none">
+          <strong>Previous court + ball found</strong>
+          <span id="resumeText">Resume without recalibrating the court.</span>
+          <button id="resumeSession" class="good">Resume Previous Calibration</button>
         </div>
       </div>
       <div id="cameraSourceBox" style="display:none">
@@ -443,6 +459,7 @@
   let renderRaf = null;
   let telemetry = null;
   let analysisStopFrame = null;
+  let restoredImageSize = null;
 
   const pointNames = ['NEAR-LEFT','NEAR-RIGHT','FAR-RIGHT','FAR-LEFT'];
   const lineNames = ['NEAR baseline','RIGHT sideline','FAR baseline','LEFT sideline'];
@@ -701,6 +718,115 @@
     return [...document.querySelectorAll('.zone input:checked')].map(x => x.value);
   }
 
+  function applyOwnershipFromStatus(d) {
+    if (d.camera_id) $('cameraId').value = d.camera_id;
+    if (d.mount_position) $('mount').value = d.mount_position;
+    if (d.receiving_side) $('side').value = d.receiving_side;
+    if (Array.isArray(d.zones) && d.zones.length) {
+      const owned = new Set(d.zones);
+      document.querySelectorAll('.zone input').forEach(box => {
+        box.checked = owned.has(box.value);
+      });
+    }
+  }
+
+  function applyRestoredSession(d) {
+    configured = Boolean(d.configured);
+    restoredImageSize = Array.isArray(d.image_size) ? d.image_size : null;
+    applyOwnershipFromStatus(d);
+    const wizard = d.wizard || {};
+    $('gridCells').textContent = wizard.external_cells ?? 0;
+    $('cells').textContent = d.active_external_cells ?? 0;
+    $('resumeBox').style.display = 'none';
+
+    stepState(2,'DONE');
+    stepState(3,'DONE');
+    stepState(4,'DONE');
+    stepState(5,'DONE');
+
+    if (sourceReady) {
+      stage='READY';
+      stepState(1,'DONE');
+      stepState(6,'READY');
+      $('captureCourt').disabled=true;
+      $('selectBallFrame').disabled=true;
+      $('startLineCaller').disabled=false;
+      $('processOne').disabled=false;
+      $('changeBall').disabled=false;
+      setBadge('RESTORED READY','safe');
+      $('call').textContent='READY';
+      $('call').className='call';
+      say('Previous court, ball and ownership restored. Ready to analyze.');
+    } else {
+      stage='RESTORED_WAIT_VIDEO';
+      stepState(1,'NOW');
+      stepState(6,'WAIT');
+      $('captureCourt').disabled=true;
+      $('selectBallFrame').disabled=true;
+      $('startLineCaller').disabled=true;
+      $('processOne').disabled=true;
+      $('changeBall').disabled=true;
+      setBadge('CALIBRATION RESTORED','safe');
+      $('call').textContent='LOAD VIDEO';
+      $('call').className='call';
+      say('Calibration restored. Upload the same video; you do NOT need to recalibrate the court or reselect the ball.');
+    }
+    syncExactFrameControls();
+  }
+
+  async function checkPersistentSession() {
+    try {
+      const r = await fetch('/api/wizard/status');
+      if (!r.ok) return;
+      const d = await r.json();
+      const wizard = d.wizard || {};
+      if (d.configured) {
+        applyRestoredSession(d);
+        return;
+      }
+      if (wizard.restore_available) {
+        restoredImageSize = Array.isArray(d.image_size) ? d.image_size : null;
+        $('resumeBox').style.display='block';
+        $('resumeText').textContent = wizard.persisted_session
+          ? 'Saved calibration is available. Resume it without touching the court corners.'
+          : 'Legacy calibration + ball found. Resume once; LineCaller will save ownership for automatic future restores.';
+        setBadge('CALIBRATION FOUND','warn');
+        say('Previous court calibration and ball are still on disk. Click Resume Previous Calibration.');
+      } else if (wizard.restore_error) {
+        setBadge('RESTORE WARNING','warn');
+        say(`Saved session could not be restored: ${wizard.restore_error}`);
+      }
+    } catch(_) {
+      // Wizard remains usable even when status lookup fails.
+    }
+  }
+
+  async function resumePreviousSession() {
+    const owned = zones();
+    if (!owned.length) {
+      setBadge('OWNERSHIP REQUIRED','bad');
+      say('Select at least one camera-owned outside zone before resuming.');
+      return;
+    }
+    const fd = new FormData();
+    fd.append('camera_id',$('cameraId').value.trim() || 'video-camera-01');
+    fd.append('mount_position',$('mount').value);
+    fd.append('zones',owned.join(','));
+    fd.append('receiving_side',$('side').value);
+    fd.append('depth_bu',$('depthBu').value);
+    try {
+      $('resumeSession').disabled=true;
+      const r = await fetch('/api/wizard/restore',{method:'POST',body:fd});
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Previous session restore failed');
+      applyRestoredSession(d);
+    } catch(e) {
+      $('resumeSession').disabled=false;
+      setBadge('RESTORE ERROR','bad');
+      say(e.message || String(e));
+    }
+  }
+
   function fps() {
     return Math.max(5, Math.min(120, Number($('analysisFps').value) || 30));
   }
@@ -882,6 +1008,7 @@
 
   async function loadVideoFile(file) {
     if (!file) return;
+    const hadConfiguredRuntime = configured;
     stopNativePlayback();
     if (stream) {
       stream.getTracks().forEach(t => t.stop());
@@ -899,7 +1026,51 @@
     });
     await waitForSeek();
     resizeCanvas();
+
+    if (hadConfiguredRuntime && restoredImageSize &&
+        (video.videoWidth !== Number(restoredImageSize[0]) ||
+         video.videoHeight !== Number(restoredImageSize[1]))) {
+      throw new Error(
+        `Video size ${video.videoWidth}x${video.videoHeight} does not match ` +
+        `restored calibration ${restoredImageSize[0]}x${restoredImageSize[1]}.`
+      );
+    }
+
     sourceReady = true;
+    transportEnabled(true);
+    $('jumpStart').disabled = false;
+    video.playbackRate = Number($('browseRate').value) || 1;
+    await seekTo(0);
+    initializeExactFrameInputs();
+    startRenderLoop();
+
+    if (hadConfiguredRuntime) {
+      analyzing=false;
+      analysisStopFrame=null;
+      runtimeFrameNo=0;
+      processed.style.display='none';
+      canvas.style.display='block';
+      resetTelemetry();
+      stage='READY';
+      stepState(1,'DONE');
+      stepState(2,'DONE');
+      stepState(3,'DONE');
+      stepState(4,'DONE');
+      stepState(5,'DONE');
+      stepState(6,'READY');
+      $('captureCourt').disabled=true;
+      $('selectBallFrame').disabled=true;
+      $('startLineCaller').disabled=false;
+      $('processOne').disabled=false;
+      $('changeBall').disabled=false;
+      setBadge('RESTORED READY','safe');
+      $('call').textContent='READY';
+      $('call').className='call';
+      say('Video loaded. Previous court calibration and ball remain active. Use Exact Frame Navigation directly.');
+      syncExactFrameControls();
+      return;
+    }
+
     stage = 'CLEAN';
     resetMediaState();
     transportEnabled(true);
@@ -907,10 +1078,6 @@
     $('jumpStart').disabled = false;
     stepState(1,'DONE');
     stepState(2,'NOW');
-    video.playbackRate = Number($('browseRate').value) || 1;
-    await seekTo(0);
-    initializeExactFrameInputs();
-    startRenderLoop();
     setBadge('VIDEO READY','safe');
     say('Video loaded. Use Play, scrubber, or Step Frame to find a clean court frame.');
   }
@@ -1221,6 +1388,7 @@
       setBadge('READY','safe');
       $('call').textContent = 'READY';
       $('call').className = 'call';
+      $('resumeBox').style.display='none';
       say(sourceMode === 'VIDEO'
         ? 'Ready. Seek near the rally/bounce, then Analyze Video Frame-by-Frame.'
         : 'Ready. Start LineCaller for the live camera.');
@@ -1526,6 +1694,7 @@
   $('undoPoint').addEventListener('click',undoPoint);
   $('buildGrid').addEventListener('click',buildGrid);
   $('selectBallFrame').addEventListener('click',armBallSelection);
+  $('resumeSession').addEventListener('click',resumePreviousSession);
   $('startLineCaller').addEventListener('click',()=>startLineCaller(false));
   $('analyzeRange').addEventListener('click',analyzeExactRange);
   $('gotoFrameBtn').addEventListener('click',goToExactFrame);
@@ -1622,6 +1791,7 @@
   resetTelemetry();
   activateCalibrationMode('QUAD');
   setSourceMode('VIDEO');
+  checkPersistentSession();
 })();
 </script>
 </body>

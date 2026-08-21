@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import asdict, dataclass
+import os
 from pathlib import Path
 import shutil
 import time
@@ -35,7 +36,12 @@ from linecaller.dcf.official_external_live_runtime import (
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-RUNTIME_UPLOAD_DIR = ROOT / ".linecaller_runtime" / "live"
+RUNTIME_UPLOAD_DIR = Path(
+    os.environ.get(
+        "LINECALLER_RUNTIME_DIR",
+        str(ROOT / ".linecaller_runtime" / "live"),
+    )
+).expanduser().resolve()
 
 
 class PathConfigureRequest(BaseModel):
@@ -270,6 +276,7 @@ def health() -> dict[str, Any]:
         "runtime_feature_version": "CP-0036.2.3",
         "ball_identity_feature_version": "CP-0036.2.4",
         "contact_recovery_feature_version": "CP-0036.2.4.2",
+        "wizard_session_feature_version": "CP-0036.2.4.3",
         "configured": registry.runtime is not None,
     }
 
