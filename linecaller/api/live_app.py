@@ -278,6 +278,7 @@ def health() -> dict[str, Any]:
         "contact_recovery_feature_version": "CP-0036.2.4.2",
         "wizard_session_feature_version": "CP-0036.2.4.3",
         "tiny_ball_scale_feature_version": "CP-0036.2.4.4",
+        "approach_direction_feature_version": "CP-0036.2.4.5",
         "configured": registry.runtime is not None,
     }
 
@@ -464,6 +465,15 @@ async def process_frame(
         payload["motion_history_observations"] = loop.motion_history_observations
         payload["predicted_z0_cell"] = loop.predicted_z0_cell
         payload["approach_reason"] = loop.approach_reason
+        payload["approach_direction_rejections"] = (
+            loop.approach_direction_rejections
+        )
+        payload["approach_down_px_per_frame"] = (
+            loop.approach_down_px_per_frame
+        )
+        payload["approach_min_down_px_per_frame"] = (
+            loop.approach_min_down_px_per_frame
+        )
         payload["approach_total_motion_px"] = loop.approach_total_motion_px
         payload["approach_min_motion_px"] = loop.approach_min_motion_px
         payload["approach_prediction_error_px"] = loop.approach_prediction_error_px
@@ -527,6 +537,9 @@ async def process_frame(
         payload["motion_history_observations"] = 0
         payload["predicted_z0_cell"] = None
         payload["approach_reason"] = None
+        payload["approach_direction_rejections"] = 0
+        payload["approach_down_px_per_frame"] = None
+        payload["approach_min_down_px_per_frame"] = None
         payload["approach_total_motion_px"] = 0.0
         payload["approach_min_motion_px"] = 0.0
         payload["approach_prediction_error_px"] = None

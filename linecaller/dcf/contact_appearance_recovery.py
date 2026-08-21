@@ -57,6 +57,8 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         contact_recovery_prediction_radius_bu: float = 1.60,
         contact_recovery_component_radius_bu: float = 1.35,
         contact_recovery_min_down_bu_per_frame: float = 0.05,
+        approach_direction_gate: bool = True,
+        approach_min_down_bu_per_frame: float = 0.05,
         contact_recovery_min_value_ratio: float = 0.55,
         contact_recovery_max_candidates: int = 3,
         **kwargs,
@@ -72,6 +74,10 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         )
         self.contact_recovery_min_down_bu_per_frame = float(
             contact_recovery_min_down_bu_per_frame
+        )
+        self.approach_direction_gate = bool(approach_direction_gate)
+        self.approach_min_down_bu_per_frame = float(
+            approach_min_down_bu_per_frame
         )
         self.contact_recovery_min_value_ratio = float(
             contact_recovery_min_value_ratio
@@ -92,6 +98,10 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         if self.contact_recovery_min_down_bu_per_frame < 0.0:
             raise ValueError(
                 "contact_recovery_min_down_bu_per_frame must be >= 0"
+            )
+        if self.approach_min_down_bu_per_frame < 0.0:
+            raise ValueError(
+                "approach_min_down_bu_per_frame must be >= 0"
             )
         if not 0.0 < self.contact_recovery_min_value_ratio <= 1.0:
             raise ValueError(
@@ -132,6 +142,9 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
 
     def _reset_approach_diagnostics(self) -> None:
         self._last_approach_reason: str | None = None
+        self._last_approach_direction_rejections = 0
+        self._last_approach_down_px_per_frame: float | None = None
+        self._last_approach_min_down_px_per_frame: float | None = None
         self._last_approach_total_motion_px = 0.0
         self._last_approach_min_motion_px = 0.0
         self._last_approach_prediction_error_px: float | None = None
@@ -501,6 +514,43 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
 
         return recovered
 
+    def _approach_down_rate(
+        self,
+        frame_no: int,
+        component: BallComponent,
+        *,
+        expected_floor_diameter_px: float,
+    ) -> tuple[float | None, float]:
+        expected = max(0.5, float(expected_floor_diameter_px))
+        min_down = self.approach_min_down_bu_per_frame * expected
+        prior = self._motion._prior_chain(frame_no, component)
+        if len(prior) < self._motion.min_prior_observations:
+            return None, float(min_down)
+
+        observations = [*prior, (int(frame_no), component)]
+        t = np.asarray(
+            [float(f) for f, _ in observations],
+            dtype=np.float64,
+        )
+        xs = np.asarray(
+            [float(c.centroid_xy[0]) for _, c in observations],
+            dtype=np.float64,
+        )
+        ys = np.asarray(
+            [float(c.centroid_xy[1]) for _, c in observations],
+            dtype=np.float64,
+        )
+        tt = t - t.mean()
+        denom = float(np.dot(tt, tt))
+        if denom <= 1e-9:
+            return None, float(min_down)
+
+        vx = float(np.dot(tt, xs - xs.mean()) / denom)
+        vy = float(np.dot(tt, ys - ys.mean()) / denom)
+        ux, uy = self.calibration.image_up_unit
+        down_px_per_frame = -(vx * ux + vy * uy)
+        return float(down_px_per_frame), float(min_down)
+
     def _diagnostic_reason(
         self,
         evidence: ApproachEvidence,
@@ -631,6 +681,24 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
                 self._last_approach_rejections += 1
                 continue
 
+            if evidence.accepted and self.approach_direction_gate:
+                down_rate, min_down = self._approach_down_rate(
+                    frame_no,
+                    component,
+                    expected_floor_diameter_px=expected,
+                )
+                self._last_approach_down_px_per_frame = down_rate
+                self._last_approach_min_down_px_per_frame = min_down
+                if down_rate is None or down_rate < min_down:
+                    self._last_approach_direction_rejections += 1
+                    self._last_approach_rejections += 1
+                    self._last_approach_reason = (
+                        "NO_DIRECTION"
+                        if down_rate is None
+                        else "NOT_DESCENDING"
+                    )
+                    continue
+
             if evidence.accepted:
                 self._last_predicted_z0_cell = int(candidate.cell_id)
             accepted.append(candidate)
@@ -660,6 +728,15 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
                 result,
                 stage_trace=tuple(trace),
                 approach_reason=self._last_approach_reason,
+                approach_direction_rejections=int(
+                    self._last_approach_direction_rejections
+                ),
+                approach_down_px_per_frame=(
+                    self._last_approach_down_px_per_frame
+                ),
+                approach_min_down_px_per_frame=(
+                    self._last_approach_min_down_px_per_frame
+                ),
                 approach_total_motion_px=float(
                     self._last_approach_total_motion_px
                 ),

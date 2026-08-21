@@ -412,6 +412,9 @@
         <div class="stat"><span>Contact recoveries</span><b id="contactRecoveries">0</b></div>
         <div class="stat"><span>Recovery frame</span><b id="recoveryFrame">-</b></div>
         <div class="stat"><span>Approach reason</span><b id="approachReason">-</b></div>
+        <div class="stat"><span>Direction rejects</span><b id="directionRejects">0</b></div>
+        <div class="stat"><span>Down px/frame</span><b id="approachDownRate">-</b></div>
+        <div class="stat"><span>Min down px/frame</span><b id="approachMinDown">-</b></div>
         <div class="stat"><span>Total motion px</span><b id="approachMotion">-</b></div>
         <div class="stat"><span>Min motion px</span><b id="approachMinMotion">-</b></div>
         <div class="stat"><span>Pred error px</span><b id="approachPredError">-</b></div>
@@ -571,13 +574,15 @@
     };
     for (const id of ['ballPixels','rawBlobs','footprints','blurMerges',
                       'projMatches','projRejects','approachRejects','motionObs',
+                      'directionRejects',
                       'contactRecoveries','extCellHits','rawZ0Total',
                       'scaleLow','scaleHigh','rasterAccepts',
                       'z0Total','upTotal','outTotal','lineGuards']) {
       $(id).textContent='0';
     }
     for (const id of ['lastZ0','lastOut','predCell','recoveryFrame',
-                      'approachReason','approachMotion','approachMinMotion',
+                      'approachReason','approachDownRate','approachMinDown',
+                      'approachMotion','approachMinMotion',
                       'approachPredError','approachAllowedError',
                       'candidateCell','projectedAnchor','scaleReason',
                       'scaleCell','scaleObserved','scaleExpected','scaleRatio']) {
@@ -602,12 +607,17 @@
     const projMatches = Number(d.projected_signature_matches || 0);
     const projRejects = Number(d.projected_signature_rejections || 0);
     const approachRejects = Number(d.approach_rejections || 0);
+    const directionRejects = Number(
+      d.approach_direction_rejections || 0
+    );
     telemetry.projMatchesTotal += projMatches;
     telemetry.projRejectsTotal += projRejects;
     telemetry.approachRejectsTotal += approachRejects;
     $('projMatches').textContent = telemetry.projMatchesTotal;
     $('projRejects').textContent = telemetry.projRejectsTotal;
     $('approachRejects').textContent = telemetry.approachRejectsTotal;
+    $('directionRejects').textContent =
+      Number($('directionRejects').textContent || 0) + directionRejects;
     $('motionObs').textContent = d.motion_history_observations ?? 0;
     $('predCell').textContent =
       (d.predicted_z0_cell === null || d.predicted_z0_cell === undefined)
@@ -637,6 +647,16 @@
       telemetry.lastCandidateCell = d.candidate_cell;
       telemetry.lastProjectedAnchor = d.projected_anchor;
       $('approachReason').textContent = String(d.approach_reason);
+      $('approachDownRate').textContent =
+        (d.approach_down_px_per_frame === null ||
+         d.approach_down_px_per_frame === undefined)
+          ? '-'
+          : Number(d.approach_down_px_per_frame).toFixed(3);
+      $('approachMinDown').textContent =
+        (d.approach_min_down_px_per_frame === null ||
+         d.approach_min_down_px_per_frame === undefined)
+          ? '-'
+          : Number(d.approach_min_down_px_per_frame).toFixed(3);
       $('approachMotion').textContent =
         Number(d.approach_total_motion_px || 0).toFixed(2);
       $('approachMinMotion').textContent =
@@ -656,6 +676,15 @@
           ? '-'
           : String(d.candidate_cell);
       $('projectedAnchor').textContent = d.projected_anchor || '-';
+
+      if (directionRejects > 0) {
+        appendTelemetryEvent(
+          `${videoFrameNo} DIRECTION_REJECT ${d.approach_reason}` +
+          ` cell=${$('candidateCell').textContent}` +
+          ` down=${$('approachDownRate').textContent}` +
+          ` min=${$('approachMinDown').textContent}px/f`
+        );
+      }
 
       if (approachRejects > 0) {
         appendTelemetryEvent(

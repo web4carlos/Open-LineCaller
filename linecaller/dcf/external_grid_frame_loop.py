@@ -458,6 +458,9 @@ class ExternalFrameResult:
     scale_diag_observed_px: float | None = None
     scale_diag_expected_px: float | None = None
     scale_diag_ratio: float | None = None
+    approach_direction_rejections: int = 0
+    approach_down_px_per_frame: float | None = None
+    approach_min_down_px_per_frame: float | None = None
 
     @property
     def bingo_cells(self) -> tuple[UpConfirmation, ...]:
