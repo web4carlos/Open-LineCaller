@@ -99,6 +99,28 @@
     }
     .transport input[type=range] { padding:0; }
     .transport-time { font-variant-numeric:tabular-nums; font-size:11px; color:#a9bdd0; }
+    .exact-frame-nav {
+      margin-top:10px; padding:10px;
+      border:1px solid #31506c; border-radius:10px;
+      background:#0a1118;
+    }
+    .exact-frame-title {
+      font-size:10px; font-weight:800; color:#9fc9f4;
+      text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px;
+    }
+    .exact-frame-grid {
+      display:grid; grid-template-columns:1fr auto;
+      gap:7px; align-items:end;
+    }
+    .exact-frame-range {
+      display:grid; grid-template-columns:1fr 1fr;
+      gap:7px; margin-top:7px;
+    }
+    .exact-frame-nav label { margin-top:0; }
+    .exact-frame-nav button { margin-top:0; min-width:92px; }
+    .exact-frame-help {
+      margin-top:7px; color:#8197ab; font-size:10px; line-height:1.45;
+    }
     .stats {
       display:grid; grid-template-columns:repeat(6,1fr);
       gap:7px; margin-top:10px;
@@ -318,6 +340,32 @@
         <button id="stepForward" disabled>Step Frame Forward</button>
         <button id="jumpStart" disabled>Go to Start</button>
       </div>
+
+      <div class="exact-frame-nav">
+        <div class="exact-frame-title">Exact Frame Navigation</div>
+        <div class="exact-frame-grid">
+          <div>
+            <label>Go to video frame</label>
+            <input id="gotoFrame" type="number" min="0" step="1" value="0" disabled>
+          </div>
+          <button id="gotoFrameBtn" disabled>GO</button>
+        </div>
+        <div class="exact-frame-range">
+          <div>
+            <label>Analyze FROM frame</label>
+            <input id="rangeFrom" type="number" min="0" step="1" value="0" disabled>
+          </div>
+          <div>
+            <label>STOP AT frame</label>
+            <input id="rangeTo" type="number" min="0" step="1" value="0" disabled>
+          </div>
+        </div>
+        <button id="analyzeRange" class="good" disabled>Analyze Exact Range</button>
+        <div class="exact-frame-help">
+          Keyboard: Left/Right = 1 frame, Shift+Left/Right = 10 frames,
+          G = focus frame box, Space = pause analysis or play/pause browsing.
+        </div>
+      </div>
     </div>
 
     <div id="instruction" class="instruction">
@@ -385,6 +433,7 @@
   let runtimeFrameNo = 0;
   let renderRaf = null;
   let telemetry = null;
+  let analysisStopFrame = null;
 
   const pointNames = ['NEAR-LEFT','NEAR-RIGHT','FAR-RIGHT','FAR-LEFT'];
   const lineNames = ['NEAR baseline','RIGHT sideline','FAR baseline','LEFT sideline'];
@@ -591,6 +640,59 @@
     return 1 / fps();
   }
 
+  function currentVideoFrameNo() {
+    return Math.max(0, Math.round((video.currentTime || 0) * fps()));
+  }
+
+  function maxVideoFrameNo() {
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    return Math.max(0, Math.ceil(duration * fps()) - 1);
+  }
+
+  function normalizeFrameNo(value) {
+    const parsed = Math.round(Number(value));
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.max(0, Math.min(parsed, maxVideoFrameNo()));
+  }
+
+  async function seekToFrame(frameNo) {
+    const targetFrame = normalizeFrameNo(frameNo);
+    await seekTo(targetFrame / fps());
+    $('videoFrame').textContent = targetFrame;
+    return targetFrame;
+  }
+
+  function syncExactFrameControls() {
+    const videoReady = sourceMode === 'VIDEO' && sourceReady;
+    const idle = !analyzing;
+    const analysisReady = videoReady && configured && stage === 'READY' && idle;
+    for (const id of ['gotoFrame','rangeFrom','rangeTo']) {
+      $(id).disabled = !(videoReady && idle);
+      $(id).max = String(maxVideoFrameNo());
+    }
+    $('gotoFrameBtn').disabled = !(videoReady && idle);
+    $('analyzeRange').disabled = !analysisReady;
+  }
+
+  function initializeExactFrameInputs() {
+    const current = currentVideoFrameNo();
+    const maxFrame = maxVideoFrameNo();
+    $('gotoFrame').value = String(current);
+    $('rangeFrom').value = String(current);
+    $('rangeTo').value = String(Math.min(maxFrame, current + 30));
+    syncExactFrameControls();
+  }
+
+  async function goToExactFrame() {
+    if (sourceMode !== 'VIDEO' || !sourceReady || analyzing) return;
+    stopNativePlayback();
+    processed.style.display='none';
+    canvas.style.display='block';
+    const frameNo = await seekToFrame($('gotoFrame').value);
+    $('gotoFrame').value = String(frameNo);
+    say(`Moved exactly to video frame ${frameNo}.`);
+  }
+
   function formatTime(value) {
     const t = Math.max(0, Number(value) || 0);
     const min = Math.floor(t / 60);
@@ -604,13 +706,14 @@
     $('scrubber').max = duration || 0;
     $('scrubber').value = Math.min(video.currentTime || 0, duration || 0);
     $('timeLabel').textContent = `${formatTime(video.currentTime)} / ${formatTime(duration)}`;
-    $('videoFrame').textContent = Math.max(0, Math.round((video.currentTime || 0) * fps()));
+    $('videoFrame').textContent = currentVideoFrameNo();
   }
 
   function transportEnabled(on) {
     for (const id of ['playPause','scrubber','stepBack','stepForward','jumpStart']) {
       $(id).disabled = !on;
     }
+    syncExactFrameControls();
   }
 
   function resizeCanvas() {
@@ -669,6 +772,7 @@
   function resetMediaState() {
     analyzing = false;
     configured = false;
+    analysisStopFrame = null;
     runtimeFrameNo = 0;
     cleanBlob = null;
     frozenBitmap = null;
@@ -689,6 +793,7 @@
     $('call').textContent = 'READY FOR VIDEO';
     $('call').className = 'call';
     resetTelemetry();
+    syncExactFrameControls();
   }
 
   function setSourceMode(mode) {
@@ -703,6 +808,7 @@
     } else {
       say('Live camera mode is available, but video-first is recommended for development.');
     }
+    syncExactFrameControls();
   }
 
   async function loadVideoFile(file) {
@@ -734,6 +840,7 @@
     stepState(2,'NOW');
     video.playbackRate = Number($('browseRate').value) || 1;
     await seekTo(0);
+    initializeExactFrameInputs();
     startRenderLoop();
     setBadge('VIDEO READY','safe');
     say('Video loaded. Use Play, scrubber, or Step Frame to find a clean court frame.');
@@ -1041,6 +1148,7 @@
       $('startLineCaller').disabled = false;
       $('processOne').disabled = false;
       $('changeBall').disabled = false;
+      syncExactFrameControls();
       setBadge('READY','safe');
       $('call').textContent = 'READY';
       $('call').className = 'call';
@@ -1153,14 +1261,29 @@
   async function analyzeLoop() {
     if (!analyzing || sourceMode !== 'VIDEO') return;
     const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    const processedVideoFrame = currentVideoFrameNo();
     await sendCurrentFrame();
     if (!analyzing) return;
+
+    if (analysisStopFrame !== null && processedVideoFrame >= analysisStopFrame) {
+      const stopFrame = analysisStopFrame;
+      analyzing=false;
+      analysisStopFrame=null;
+      $('pauseAnalysis').disabled=true;
+      $('startLineCaller').disabled=false;
+      syncExactFrameControls();
+      setBadge('RANGE COMPLETE','safe');
+      say(`Exact analysis range complete at video frame ${stopFrame}.`);
+      return;
+    }
 
     const next = video.currentTime + frameStepSeconds();
     if (duration > 0 && next >= duration) {
       analyzing=false;
       $('pauseAnalysis').disabled=true;
       $('startLineCaller').disabled=false;
+      analysisStopFrame=null;
+      syncExactFrameControls();
       setBadge('VIDEO COMPLETE','safe');
       say('Reached the end of the video.');
       return;
@@ -1169,9 +1292,30 @@
     setTimeout(analyzeLoop,0);
   }
 
-  async function startLineCaller() {
+  async function analyzeExactRange() {
+    if (!configured || sourceMode !== 'VIDEO' || analyzing) return;
+    let fromFrame = normalizeFrameNo($('rangeFrom').value);
+    let toFrame = normalizeFrameNo($('rangeTo').value);
+    if (toFrame < fromFrame) {
+      setBadge('RANGE ERROR','bad');
+      say('STOP AT frame must be greater than or equal to FROM frame.');
+      return;
+    }
+
+    $('rangeFrom').value = String(fromFrame);
+    $('rangeTo').value = String(toFrame);
+    stopNativePlayback();
+    processed.style.display='none';
+    canvas.style.display='block';
+    await seekToFrame(fromFrame);
+    analysisStopFrame = toFrame;
+    await startLineCaller(true);
+  }
+
+  async function startLineCaller(preserveRange=false) {
     if (!configured) return;
     stopNativePlayback();
+    if (!preserveRange) analysisStopFrame=null;
 
     const resetResponse = await fetch('/api/live/reset-events',{method:'POST'});
     if (!resetResponse.ok) {
@@ -1188,8 +1332,13 @@
       analyzing=true;
       $('startLineCaller').disabled=true;
       $('pauseAnalysis').disabled=false;
+      syncExactFrameControls();
       setBadge('ANALYZING VIDEO','safe');
-      say(`Deterministic analysis started at ${fps()} FPS from ${formatTime(video.currentTime)}.`);
+      if (analysisStopFrame !== null) {
+        say(`Exact analysis started at video frame ${currentVideoFrameNo()} and will stop automatically at frame ${analysisStopFrame}.`);
+      } else {
+        say(`Deterministic analysis started at ${fps()} FPS from ${formatTime(video.currentTime)}.`);
+      }
       await analyzeLoop();
     } else {
       analyzing=true;
@@ -1208,8 +1357,10 @@
 
   function pauseAnalysis() {
     analyzing=false;
+    analysisStopFrame=null;
     $('pauseAnalysis').disabled=true;
     $('startLineCaller').disabled=!configured;
+    syncExactFrameControls();
     setBadge('PAUSED','warn');
     say(`Analysis paused at ${formatTime(video.currentTime)}.`);
   }
@@ -1229,6 +1380,7 @@
     stepState(4,'NOW');
     $('selectBallFrame').disabled=false;
     $('startLineCaller').disabled=true;
+    syncExactFrameControls();
     say('Replacement ball mode. Seek/show the new ball, then Select Ball From Current Frame.');
   }
 
@@ -1256,15 +1408,20 @@
         : 'Open the camera to begin.');
     }
     setBadge(sourceMode === 'VIDEO' ? 'VIDEO SETUP' : 'CAMERA SETUP');
+    syncExactFrameControls();
   }
 
-  async function stepBy(direction) {
+  async function stepBy(direction, count=1) {
     if (sourceMode !== 'VIDEO' || !sourceReady) return;
     stopNativePlayback();
     analyzing=false;
+    analysisStopFrame=null;
     processed.style.display='none';
     canvas.style.display='block';
-    await seekTo(video.currentTime + direction*frameStepSeconds());
+    const target = currentVideoFrameNo() + direction * Math.max(1, Number(count) || 1);
+    const actual = await seekToFrame(target);
+    $('gotoFrame').value = String(actual);
+    syncExactFrameControls();
   }
 
   $('useInteractiveQuad').addEventListener('click',()=>{
@@ -1300,7 +1457,15 @@
   $('undoPoint').addEventListener('click',undoPoint);
   $('buildGrid').addEventListener('click',buildGrid);
   $('selectBallFrame').addEventListener('click',armBallSelection);
-  $('startLineCaller').addEventListener('click',startLineCaller);
+  $('startLineCaller').addEventListener('click',()=>startLineCaller(false));
+  $('analyzeRange').addEventListener('click',analyzeExactRange);
+  $('gotoFrameBtn').addEventListener('click',goToExactFrame);
+  $('gotoFrame').addEventListener('keydown',ev=>{
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      goToExactFrame();
+    }
+  });
   $('pauseAnalysis').addEventListener('click',pauseAnalysis);
   $('processOne').addEventListener('click',processOne);
   $('changeBall').addEventListener('click',changeBall);
@@ -1337,7 +1502,48 @@
 
   $('stepBack').addEventListener('click',()=>stepBy(-1));
   $('stepForward').addEventListener('click',()=>stepBy(1));
-  $('jumpStart').addEventListener('click',()=>seekTo(0));
+  $('jumpStart').addEventListener('click',async()=>{
+    await seekToFrame(0);
+    $('gotoFrame').value='0';
+  });
+
+  document.addEventListener('keydown',async ev=>{
+    const active = document.activeElement;
+    const tag = active && active.tagName ? active.tagName.toLowerCase() : '';
+    const editing = tag === 'input' || tag === 'textarea' || tag === 'select';
+
+    if (editing) return;
+    if (sourceMode !== 'VIDEO' || !sourceReady) return;
+
+    if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
+      ev.preventDefault();
+      const direction = ev.key === 'ArrowLeft' ? -1 : 1;
+      await stepBy(direction, ev.shiftKey ? 10 : 1);
+      return;
+    }
+
+    if (ev.key === 'g' || ev.key === 'G') {
+      ev.preventDefault();
+      $('gotoFrame').focus();
+      $('gotoFrame').select();
+      return;
+    }
+
+    if (ev.code === 'Space') {
+      ev.preventDefault();
+      if (analyzing) {
+        pauseAnalysis();
+      } else if (video.paused) {
+        video.playbackRate=Number($('browseRate').value)||1;
+        await video.play();
+        $('playPause').textContent='Pause';
+      } else {
+        video.pause();
+        $('playPause').textContent='Play';
+      }
+    }
+  });
+
   video.addEventListener('timeupdate',updateTransport);
   video.addEventListener('ended',()=>{
     $('playPause').textContent='Play';
