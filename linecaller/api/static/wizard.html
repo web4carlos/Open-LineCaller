@@ -716,55 +716,6 @@
       );
     }
 
-    const extHits = Number(d.external_cell_component_hits || 0);
-    const rawZ0 = Number(d.raw_z0_candidates || 0);
-    const scaleLow = Number(d.scale_low_rejections || 0);
-    const scaleHigh = Number(d.scale_high_rejections || 0);
-    const rasterAccepts = Number(d.scale_quantized_accepts || 0);
-
-    telemetry.extCellHitsTotal += extHits;
-    telemetry.rawZ0Total += rawZ0;
-    telemetry.scaleLowTotal += scaleLow;
-    telemetry.scaleHighTotal += scaleHigh;
-    telemetry.rasterAcceptsTotal += rasterAccepts;
-
-    $('extCellHits').textContent = telemetry.extCellHitsTotal;
-    $('rawZ0Total').textContent = telemetry.rawZ0Total;
-    $('scaleLow').textContent = telemetry.scaleLowTotal;
-    $('scaleHigh').textContent = telemetry.scaleHighTotal;
-    $('rasterAccepts').textContent = telemetry.rasterAcceptsTotal;
-
-    if (d.scale_diag_reason) {
-      telemetry.lastScaleReason = d.scale_diag_reason;
-      telemetry.lastScaleCell = d.scale_diag_cell;
-      telemetry.lastScaleObserved = d.scale_diag_observed_px;
-      telemetry.lastScaleExpected = d.scale_diag_expected_px;
-      telemetry.lastScaleRatio = d.scale_diag_ratio;
-      $('scaleReason').textContent = String(d.scale_diag_reason);
-      $('scaleCell').textContent =
-        (d.scale_diag_cell === null || d.scale_diag_cell === undefined)
-          ? '-' : String(d.scale_diag_cell);
-      $('scaleObserved').textContent =
-        (d.scale_diag_observed_px === null ||
-         d.scale_diag_observed_px === undefined)
-          ? '-' : Number(d.scale_diag_observed_px).toFixed(2);
-      $('scaleExpected').textContent =
-        (d.scale_diag_expected_px === null ||
-         d.scale_diag_expected_px === undefined)
-          ? '-' : Number(d.scale_diag_expected_px).toFixed(2);
-      $('scaleRatio').textContent =
-        (d.scale_diag_ratio === null || d.scale_diag_ratio === undefined)
-          ? '-' : Number(d.scale_diag_ratio).toFixed(3);
-    }
-
-    if (rasterAccepts > 0) {
-      appendTelemetryEvent(
-        `${videoFrameNo} RASTER_SCALE_ACCEPT x${rasterAccepts}` +
-        ` cell=${$('scaleCell').textContent}` +
-        ` obs/exp=${$('scaleObserved').textContent}/${$('scaleExpected').textContent}px`
-      );
-    }
-
     const z0n = Number(d.z0_candidates || 0);
     const upn = Number(d.up_confirmations || 0);
     const guards = Number(d.boundary_guard_rejections || 0);

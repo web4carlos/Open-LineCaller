@@ -278,7 +278,6 @@ def health() -> dict[str, Any]:
         "contact_recovery_feature_version": "CP-0036.2.4.2",
         "wizard_session_feature_version": "CP-0036.2.4.3",
         "tiny_ball_scale_feature_version": "CP-0036.2.4.4",
-        "tiny_ball_scale_feature_version": "CP-0036.2.4.4",
         "configured": registry.runtime is not None,
     }
 

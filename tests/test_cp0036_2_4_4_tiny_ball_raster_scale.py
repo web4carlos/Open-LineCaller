@@ -214,3 +214,36 @@ def test_health_and_wizard_expose_cp0036_2_4_4_diagnostics():
         "RASTER_SCALE_ACCEPT",
     ):
         assert token in html
+
+
+def test_cp0036_2_4_4_source_blocks_are_not_duplicated():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    external = (
+        root / "linecaller/dcf/external_grid_frame_loop.py"
+    ).read_text(encoding="utf-8")
+    live_app = (
+        root / "linecaller/api/live_app.py"
+    ).read_text(encoding="utf-8")
+    wizard = (
+        root / "linecaller/api/static/wizard.html"
+    ).read_text(encoding="utf-8")
+
+    assert external.count("def rasterized_scale_bounds_px(") == 1
+    assert external.count("def rasterized_scale_compatible(") == 1
+    assert external.count("def _reset_pre_z0_telemetry(") == 1
+    assert external.count("def _record_scale_diagnostic(") == 1
+
+    assert (
+        live_app.count(
+            '"tiny_ball_scale_feature_version": "CP-0036.2.4.4"'
+        )
+        == 1
+    )
+
+    assert wizard.count('id="extCellHits"') == 1
+    assert wizard.count(
+        "const extHits = Number(d.external_cell_component_hits || 0);"
+    ) == 1
+    assert wizard.count("RASTER_SCALE_ACCEPT x${rasterAccepts}") == 1

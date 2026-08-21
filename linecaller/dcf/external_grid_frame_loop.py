@@ -320,40 +320,6 @@ def rasterized_scale_compatible(
     return lo <= observed <= hi
 
 
-def rasterized_scale_bounds_px(
-    expected_px: float,
-    min_ratio: float,
-    max_ratio: float,
-    *,
-    tiny_expected_threshold_px: float = 3.0,
-    quantization_tolerance_px: float = 0.5,
-) -> tuple[float, float]:
-    # CP-0036.2.4.4: only tiny projected balls receive integer-raster allowance.
-    expected = max(0.5, float(expected_px))
-    lo = float(min_ratio) * expected
-    hi = float(max_ratio) * expected
-    if expected < float(tiny_expected_threshold_px):
-        q = max(0.0, float(quantization_tolerance_px))
-        lo = max(0.0, lo - q)
-        hi = hi + q
-    return float(lo), float(hi)
-
-
-def rasterized_scale_compatible(
-    observed_px: float,
-    expected_px: float,
-    min_ratio: float,
-    max_ratio: float,
-) -> bool:
-    lo, hi = rasterized_scale_bounds_px(
-        expected_px,
-        min_ratio,
-        max_ratio,
-    )
-    observed = float(observed_px)
-    return lo <= observed <= hi
-
-
 @dataclass(frozen=True)
 class LockedBallColorProfile:
     hue_center: float
@@ -492,16 +458,6 @@ class ExternalFrameResult:
     scale_diag_observed_px: float | None = None
     scale_diag_expected_px: float | None = None
     scale_diag_ratio: float | None = None
-    external_cell_component_hits: int = 0
-    raw_z0_candidates: int = 0
-    scale_low_rejections: int = 0
-    scale_high_rejections: int = 0
-    scale_quantized_accepts: int = 0
-    scale_diag_reason: str | None = None
-    scale_diag_cell: int | None = None
-    scale_diag_observed_px: float | None = None
-    scale_diag_expected_px: float | None = None
-    scale_diag_ratio: float | None = None
 
     @property
     def bingo_cells(self) -> tuple[UpConfirmation, ...]:
@@ -591,7 +547,6 @@ class ExternalGridFrameLoop:
 
         self._pending: list[_PendingZ0] = []
         self._last_bingo_frame_by_cell: dict[int, int] = {}
-        self._reset_pre_z0_telemetry()
         self._reset_pre_z0_telemetry()
 
     def _components(self, current: Image.Image) -> tuple[np.ndarray, np.ndarray, list[BallComponent]]:
