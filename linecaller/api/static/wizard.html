@@ -393,6 +393,15 @@
         <div class="stat"><span>Approach rejects</span><b id="approachRejects">0</b></div>
         <div class="stat"><span>Motion obs</span><b id="motionObs">0</b></div>
         <div class="stat"><span>Pred cell</span><b id="predCell">-</b></div>
+        <div class="stat"><span>Contact recoveries</span><b id="contactRecoveries">0</b></div>
+        <div class="stat"><span>Recovery frame</span><b id="recoveryFrame">-</b></div>
+        <div class="stat"><span>Approach reason</span><b id="approachReason">-</b></div>
+        <div class="stat"><span>Total motion px</span><b id="approachMotion">-</b></div>
+        <div class="stat"><span>Min motion px</span><b id="approachMinMotion">-</b></div>
+        <div class="stat"><span>Pred error px</span><b id="approachPredError">-</b></div>
+        <div class="stat"><span>Allowed error px</span><b id="approachAllowedError">-</b></div>
+        <div class="stat"><span>Candidate cell</span><b id="candidateCell">-</b></div>
+        <div class="stat"><span>Projected anchor</span><b id="projectedAnchor">-</b></div>
         <div class="stat"><span>Z0 total</span><b id="z0Total">0</b></div>
         <div class="stat"><span>UP total</span><b id="upTotal">0</b></div>
         <div class="stat"><span>OUT total</span><b id="outTotal">0</b></div>
@@ -524,16 +533,23 @@
     telemetry = {
       z0Total:0, upTotal:0, outTotal:0, lineGuards:0,
       projMatchesTotal:0, projRejectsTotal:0, approachRejectsTotal:0,
+      contactRecoveriesTotal:0, lastRecovery:null,
+      lastApproachReason:null, lastCandidateCell:null,
+      lastProjectedAnchor:null,
       lastZ0:null, lastOut:null, events:[]
     };
     for (const id of ['ballPixels','rawBlobs','footprints','blurMerges',
                       'projMatches','projRejects','approachRejects','motionObs',
+                      'contactRecoveries',
                       'z0Total','upTotal','outTotal','lineGuards']) {
       $(id).textContent='0';
     }
-    $('lastZ0').textContent='-';
-    $('lastOut').textContent='-';
-    $('predCell').textContent='-';
+    for (const id of ['lastZ0','lastOut','predCell','recoveryFrame',
+                      'approachReason','approachMotion','approachMinMotion',
+                      'approachPredError','approachAllowedError',
+                      'candidateCell','projectedAnchor']) {
+      $(id).textContent='-';
+    }
     $('eventLog').textContent='No events yet.';
   }
 
@@ -564,6 +580,59 @@
       (d.predicted_z0_cell === null || d.predicted_z0_cell === undefined)
         ? '-'
         : String(d.predicted_z0_cell);
+
+    const recoveries = Number(d.contact_recoveries || 0);
+    if (recoveries > 0) {
+      telemetry.contactRecoveriesTotal += recoveries;
+      telemetry.lastRecovery = videoFrameNo;
+      $('contactRecoveries').textContent = telemetry.contactRecoveriesTotal;
+      $('recoveryFrame').textContent = videoFrameNo;
+      const recoveryCell =
+        (d.contact_recovery_cell === null || d.contact_recovery_cell === undefined)
+          ? '-'
+          : String(d.contact_recovery_cell);
+      appendTelemetryEvent(
+        `${videoFrameNo} CONTACT_RECOVERY x${recoveries} cell=${recoveryCell}`
+      );
+    } else {
+      $('contactRecoveries').textContent = telemetry.contactRecoveriesTotal;
+      $('recoveryFrame').textContent = telemetry.lastRecovery ?? '-';
+    }
+
+    if (d.approach_reason) {
+      telemetry.lastApproachReason = d.approach_reason;
+      telemetry.lastCandidateCell = d.candidate_cell;
+      telemetry.lastProjectedAnchor = d.projected_anchor;
+      $('approachReason').textContent = String(d.approach_reason);
+      $('approachMotion').textContent =
+        Number(d.approach_total_motion_px || 0).toFixed(2);
+      $('approachMinMotion').textContent =
+        Number(d.approach_min_motion_px || 0).toFixed(2);
+      $('approachPredError').textContent =
+        (d.approach_prediction_error_px === null ||
+         d.approach_prediction_error_px === undefined)
+          ? '-'
+          : Number(d.approach_prediction_error_px).toFixed(2);
+      $('approachAllowedError').textContent =
+        (d.approach_allowed_error_px === null ||
+         d.approach_allowed_error_px === undefined)
+          ? '-'
+          : Number(d.approach_allowed_error_px).toFixed(2);
+      $('candidateCell').textContent =
+        (d.candidate_cell === null || d.candidate_cell === undefined)
+          ? '-'
+          : String(d.candidate_cell);
+      $('projectedAnchor').textContent = d.projected_anchor || '-';
+
+      if (approachRejects > 0) {
+        appendTelemetryEvent(
+          `${videoFrameNo} APPROACH_REJECT ${d.approach_reason}` +
+          ` cell=${$('candidateCell').textContent}` +
+          ` motion=${$('approachMotion').textContent}/${$('approachMinMotion').textContent}px` +
+          ` predErr=${$('approachPredError').textContent}/${$('approachAllowedError').textContent}px`
+        );
+      }
+    }
 
     const z0n = Number(d.z0_candidates || 0);
     const upn = Number(d.up_confirmations || 0);

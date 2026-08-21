@@ -156,6 +156,13 @@ class LiveRuntimeRegistry:
                 projection_anchor_distance_bu=0.95,
                 approach_prediction_radius_bu=2.50,
                 approach_min_total_motion_bu=0.65,
+                contact_appearance_recovery=True,
+                contact_recovery_max_frames=2,
+                contact_recovery_prediction_radius_bu=1.60,
+                contact_recovery_component_radius_bu=1.35,
+                contact_recovery_min_down_bu_per_frame=0.05,
+                contact_recovery_min_value_ratio=0.55,
+                contact_recovery_max_candidates=3,
             ),
         )
 
@@ -262,6 +269,7 @@ def health() -> dict[str, Any]:
         "feature_version": "CP-0036.2.1",
         "runtime_feature_version": "CP-0036.2.3",
         "ball_identity_feature_version": "CP-0036.2.4",
+        "contact_recovery_feature_version": "CP-0036.2.4.2",
         "configured": registry.runtime is not None,
     }
 
@@ -447,6 +455,16 @@ async def process_frame(
         payload["approach_rejections"] = loop.approach_rejections
         payload["motion_history_observations"] = loop.motion_history_observations
         payload["predicted_z0_cell"] = loop.predicted_z0_cell
+        payload["approach_reason"] = loop.approach_reason
+        payload["approach_total_motion_px"] = loop.approach_total_motion_px
+        payload["approach_min_motion_px"] = loop.approach_min_motion_px
+        payload["approach_prediction_error_px"] = loop.approach_prediction_error_px
+        payload["approach_allowed_error_px"] = loop.approach_allowed_error_px
+        payload["candidate_cell"] = loop.candidate_cell
+        payload["projected_anchor"] = loop.projected_anchor
+        payload["contact_recoveries"] = loop.contact_recoveries
+        payload["contact_recovery_frame"] = loop.contact_recovery_frame
+        payload["contact_recovery_cell"] = loop.contact_recovery_cell
         payload["z0_candidates"] = len(loop.z0_candidates)
         payload["up_confirmations"] = len(loop.up_confirmations)
         payload["z0_events"] = [
@@ -488,6 +506,16 @@ async def process_frame(
         payload["approach_rejections"] = 0
         payload["motion_history_observations"] = 0
         payload["predicted_z0_cell"] = None
+        payload["approach_reason"] = None
+        payload["approach_total_motion_px"] = 0.0
+        payload["approach_min_motion_px"] = 0.0
+        payload["approach_prediction_error_px"] = None
+        payload["approach_allowed_error_px"] = None
+        payload["candidate_cell"] = None
+        payload["projected_anchor"] = None
+        payload["contact_recoveries"] = 0
+        payload["contact_recovery_frame"] = None
+        payload["contact_recovery_cell"] = None
         payload["z0_candidates"] = 0
         payload["up_confirmations"] = 0
         payload["z0_events"] = []

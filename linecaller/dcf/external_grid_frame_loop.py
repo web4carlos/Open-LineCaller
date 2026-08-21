@@ -354,6 +354,10 @@ class BallComponent:
     # Number of raw same-color fragments merged into this physical footprint.
     # A fast ball can appear as core + halo/streak in one exposure.
     merged_from: int = 1
+    # CP-0036.2.4.2: a recovered component temporarily relaxes selected-ball
+    # appearance only inside a trajectory-predicted projected-Z0 neighborhood.
+    recovered: bool = False
+    recovery_age: int = 0
 
 
 @dataclass(frozen=True)
@@ -400,6 +404,16 @@ class ExternalFrameResult:
     approach_rejections: int = 0
     motion_history_observations: int = 0
     predicted_z0_cell: int | None = None
+    approach_reason: str | None = None
+    approach_total_motion_px: float = 0.0
+    approach_min_motion_px: float = 0.0
+    approach_prediction_error_px: float | None = None
+    approach_allowed_error_px: float | None = None
+    candidate_cell: int | None = None
+    projected_anchor: str | None = None
+    contact_recoveries: int = 0
+    contact_recovery_frame: int | None = None
+    contact_recovery_cell: int | None = None
 
     @property
     def bingo_cells(self) -> tuple[UpConfirmation, ...]:

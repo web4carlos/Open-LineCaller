@@ -31,6 +31,9 @@ from linecaller.dcf.external_grid_frame_loop import (
 from linecaller.dcf.projected_z0_identity import (
     ProjectedIdentityExternalGridFrameLoop,
 )
+from linecaller.dcf.contact_appearance_recovery import (
+    ContactRecoveryProjectedIdentityExternalGridFrameLoop,
+)
 from linecaller.dcf.z0_floor_glow_renderer import render_soft_floor_glow
 
 
@@ -63,6 +66,15 @@ class OfficialExternalLiveConfig:
     approach_prediction_radius_bu: float = 2.50
     approach_min_total_motion_bu: float = 0.65
 
+    # Historical defaults stay OFF. Wizard/API opts into CP-0036.2.4.2.
+    contact_appearance_recovery: bool = False
+    contact_recovery_max_frames: int = 2
+    contact_recovery_prediction_radius_bu: float = 1.60
+    contact_recovery_component_radius_bu: float = 1.35
+    contact_recovery_min_down_bu_per_frame: float = 0.05
+    contact_recovery_min_value_ratio: float = 0.55
+    contact_recovery_max_candidates: int = 3
+
     def __post_init__(self) -> None:
         if self.glow_hold_s <= 0.0:
             raise ValueError("glow_hold_s must be > 0")
@@ -89,6 +101,28 @@ class OfficialExternalLiveConfig:
             raise ValueError("approach_prediction_radius_bu must be > 0")
         if self.approach_min_total_motion_bu <= 0.0:
             raise ValueError("approach_min_total_motion_bu must be > 0")
+        if self.contact_recovery_max_frames < 1:
+            raise ValueError("contact_recovery_max_frames must be >= 1")
+        if self.contact_recovery_prediction_radius_bu <= 0.0:
+            raise ValueError(
+                "contact_recovery_prediction_radius_bu must be > 0"
+            )
+        if self.contact_recovery_component_radius_bu <= 0.0:
+            raise ValueError(
+                "contact_recovery_component_radius_bu must be > 0"
+            )
+        if self.contact_recovery_min_down_bu_per_frame < 0.0:
+            raise ValueError(
+                "contact_recovery_min_down_bu_per_frame must be >= 0"
+            )
+        if not 0.0 < self.contact_recovery_min_value_ratio <= 1.0:
+            raise ValueError(
+                "contact_recovery_min_value_ratio must be in (0,1]"
+            )
+        if self.contact_recovery_max_candidates < 1:
+            raise ValueError(
+                "contact_recovery_max_candidates must be >= 1"
+            )
 
 
 @dataclass(frozen=True)
@@ -245,6 +279,48 @@ class OfficialExternalLiveRuntime:
             motion_merge_gap_px=c.motion_merge_gap_px,
             min_outside_clearance_bu=c.min_outside_clearance_bu,
         )
+
+        if c.contact_appearance_recovery:
+            return ContactRecoveryProjectedIdentityExternalGridFrameLoop(
+                calibration,
+                self._background,
+                self.ball_profile,
+                use_projected_signatures=c.projected_z0_signatures,
+                require_approach_memory=c.require_approach_memory,
+                approach_history_frames=c.approach_history_frames,
+                approach_min_prior_observations=(
+                    c.approach_min_prior_observations
+                ),
+                projection_anchor_distance_bu=(
+                    c.projection_anchor_distance_bu
+                ),
+                approach_prediction_radius_bu=(
+                    c.approach_prediction_radius_bu
+                ),
+                approach_min_total_motion_bu=(
+                    c.approach_min_total_motion_bu
+                ),
+                contact_appearance_recovery=True,
+                contact_recovery_max_frames=(
+                    c.contact_recovery_max_frames
+                ),
+                contact_recovery_prediction_radius_bu=(
+                    c.contact_recovery_prediction_radius_bu
+                ),
+                contact_recovery_component_radius_bu=(
+                    c.contact_recovery_component_radius_bu
+                ),
+                contact_recovery_min_down_bu_per_frame=(
+                    c.contact_recovery_min_down_bu_per_frame
+                ),
+                contact_recovery_min_value_ratio=(
+                    c.contact_recovery_min_value_ratio
+                ),
+                contact_recovery_max_candidates=(
+                    c.contact_recovery_max_candidates
+                ),
+                **common,
+            )
 
         if c.projected_z0_signatures or c.require_approach_memory:
             return ProjectedIdentityExternalGridFrameLoop(
