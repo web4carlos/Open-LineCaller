@@ -20,6 +20,9 @@ from linecaller.dcf.projected_z0_identity import (
     ProjectedIdentityExternalGridFrameLoop,
     ProjectionMatch,
 )
+from linecaller.dcf.predicted_topk_selector import (
+    PredictedTopKSelector,
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,12 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         contact_recovery_min_down_bu_per_frame: float = 0.05,
         approach_direction_gate: bool = True,
         approach_min_down_bu_per_frame: float = 0.05,
+        predicted_top3_candidates: bool = False,
+        trajectory_candidate_top_k: int = 3,
+        trajectory_candidate_min_gate_px: float = 5.0,
+        trajectory_candidate_gate_scale: float = 4.75,
+        trajectory_bootstrap_min_straightness: float = 0.70,
+        trajectory_lock_max_misses: int = 2,
         contact_recovery_min_value_ratio: float = 0.55,
         contact_recovery_max_candidates: int = 3,
         **kwargs,
@@ -78,6 +87,24 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         self.approach_direction_gate = bool(approach_direction_gate)
         self.approach_min_down_bu_per_frame = float(
             approach_min_down_bu_per_frame
+        )
+        self.predicted_top3_candidates = bool(
+            predicted_top3_candidates
+        )
+        self.trajectory_candidate_top_k = int(
+            trajectory_candidate_top_k
+        )
+        self.trajectory_candidate_min_gate_px = float(
+            trajectory_candidate_min_gate_px
+        )
+        self.trajectory_candidate_gate_scale = float(
+            trajectory_candidate_gate_scale
+        )
+        self.trajectory_bootstrap_min_straightness = float(
+            trajectory_bootstrap_min_straightness
+        )
+        self.trajectory_lock_max_misses = int(
+            trajectory_lock_max_misses
         )
         self.contact_recovery_min_value_ratio = float(
             contact_recovery_min_value_ratio
@@ -103,12 +130,49 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
             raise ValueError(
                 "approach_min_down_bu_per_frame must be >= 0"
             )
+        if self.trajectory_candidate_top_k < 1:
+            raise ValueError(
+                "trajectory_candidate_top_k must be >= 1"
+            )
+        if self.trajectory_candidate_min_gate_px <= 0.0:
+            raise ValueError(
+                "trajectory_candidate_min_gate_px must be > 0"
+            )
+        if self.trajectory_candidate_gate_scale <= 0.0:
+            raise ValueError(
+                "trajectory_candidate_gate_scale must be > 0"
+            )
+        if not (
+            0.0
+            < self.trajectory_bootstrap_min_straightness
+            <= 1.0
+        ):
+            raise ValueError(
+                "trajectory_bootstrap_min_straightness must be in (0,1]"
+            )
+        if self.trajectory_lock_max_misses < 0:
+            raise ValueError(
+                "trajectory_lock_max_misses must be >= 0"
+            )
         if not 0.0 < self.contact_recovery_min_value_ratio <= 1.0:
             raise ValueError(
                 "contact_recovery_min_value_ratio must be in (0,1]"
             )
         if self.contact_recovery_max_candidates < 1:
             raise ValueError("contact_recovery_max_candidates must be >= 1")
+
+        self._trajectory_selector = PredictedTopKSelector(
+            top_k=self.trajectory_candidate_top_k,
+            history_frames=self._motion.history_frames,
+            min_prior_observations=self._motion.min_prior_observations,
+            min_gate_px=self.trajectory_candidate_min_gate_px,
+            gate_scale=self.trajectory_candidate_gate_scale,
+            bootstrap_min_motion_px=1.5,
+            bootstrap_min_straightness=(
+                self.trajectory_bootstrap_min_straightness
+            ),
+            max_misses=self.trajectory_lock_max_misses,
+        )
 
         signatures = [
             signature
@@ -134,6 +198,7 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         self._recovery_hsv: np.ndarray | None = None
         self._reset_contact_recovery_telemetry()
         self._reset_approach_diagnostics()
+        self._reset_trajectory_selector_telemetry()
 
     def _reset_contact_recovery_telemetry(self) -> None:
         self._last_contact_recoveries = 0
@@ -151,6 +216,23 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         self._last_approach_allowed_error_px: float | None = None
         self._last_candidate_cell: int | None = None
         self._last_projected_anchor: str | None = None
+
+    def _reset_trajectory_selector_telemetry(self) -> None:
+        self._last_trajectory_lock_state: str | None = None
+        self._last_trajectory_components_considered = 0
+        self._last_trajectory_topk_selected = 0
+        self._last_trajectory_candidate_rejections = 0
+        self._last_trajectory_predicted_xy: (
+            tuple[float, float] | None
+        ) = None
+        self._last_trajectory_gate_px: float | None = None
+        self._last_trajectory_lock_depth = 0
+        self._last_trajectory_topk_selected_xy: tuple[
+            tuple[float, float], ...
+        ] = ()
+        self._last_trajectory_bootstrap_straightness: (
+            float | None
+        ) = None
 
     def _components(
         self,
@@ -187,6 +269,20 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         self,
         frame_no: int,
     ) -> list[RecoveryTrackPrediction]:
+        if self.predicted_top3_candidates:
+            locked = self._trajectory_selector.prediction(frame_no)
+            if locked is None:
+                return []
+            return [
+                RecoveryTrackPrediction(
+                    predicted_xy=locked.predicted_xy,
+                    velocity_xy=locked.velocity_xy,
+                    speed_px_per_frame=locked.speed_px_per_frame,
+                    prior_observations=locked.history_depth,
+                    last_component=locked.last_component,
+                )
+            ]
+
         frames = [
             (int(f), tuple(components))
             for f, components in self._motion._frames
@@ -619,6 +715,35 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
             else None
         )
 
+    @staticmethod
+    def _trajectory_component_for_candidate(
+        candidate: Z0Candidate,
+        selected_components: list[BallComponent],
+    ) -> BallComponent | None:
+        matches = [
+            component
+            for component in selected_components
+            if math.dist(
+                candidate.centroid_xy,
+                component.centroid_xy,
+            )
+            <= 0.75
+            and abs(
+                float(candidate.observed_scale_px)
+                - float(component.scale_px)
+            )
+            <= 0.75
+        ]
+        if not matches:
+            return None
+        return min(
+            matches,
+            key=lambda component: math.dist(
+                candidate.centroid_xy,
+                component.centroid_xy,
+            ),
+        )
+
     def _find_z0_candidates(
         self,
         frame_no: int,
@@ -626,6 +751,37 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
     ) -> tuple[list[Z0Candidate], int]:
         self._reset_strict_telemetry()
         self._reset_approach_diagnostics()
+        self._reset_trajectory_selector_telemetry()
+
+        trajectory_components = list(components)
+        if self.predicted_top3_candidates:
+            selection = self._trajectory_selector.select(
+                frame_no,
+                list(components),
+                self._motion._frames,
+            )
+            trajectory_components = list(selection.selected)
+            self._last_trajectory_lock_state = selection.state
+            self._last_trajectory_components_considered = (
+                selection.considered
+            )
+            self._last_trajectory_topk_selected = len(
+                selection.selected
+            )
+            self._last_trajectory_predicted_xy = (
+                selection.predicted_xy
+            )
+            self._last_trajectory_gate_px = selection.gate_px
+            self._last_trajectory_lock_depth = (
+                selection.history_depth
+            )
+            self._last_trajectory_topk_selected_xy = tuple(
+                component.centroid_xy
+                for component in selection.selected
+            )
+            self._last_trajectory_bootstrap_straightness = (
+                selection.bootstrap_straightness
+            )
 
         raw_candidates, boundary_guard_rejections = (
             ExternalGridFrameLoop._find_z0_candidates(
@@ -637,12 +793,21 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
 
         accepted: list[Z0Candidate] = []
         for candidate in raw_candidates:
-            component = self._component_for_candidate(
-                candidate,
-                components,
-            )
-            if component is None:
-                continue
+            if self.predicted_top3_candidates:
+                component = self._trajectory_component_for_candidate(
+                    candidate,
+                    trajectory_components,
+                )
+                if component is None:
+                    self._last_trajectory_candidate_rejections += 1
+                    continue
+            else:
+                component = self._component_for_candidate(
+                    candidate,
+                    components,
+                )
+                if component is None:
+                    continue
 
             projection = None
             if self.use_projected_signatures:
@@ -736,6 +901,33 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
                 ),
                 approach_min_down_px_per_frame=(
                     self._last_approach_min_down_px_per_frame
+                ),
+                trajectory_lock_state=(
+                    self._last_trajectory_lock_state
+                ),
+                trajectory_components_considered=int(
+                    self._last_trajectory_components_considered
+                ),
+                trajectory_topk_selected=int(
+                    self._last_trajectory_topk_selected
+                ),
+                trajectory_candidate_rejections=int(
+                    self._last_trajectory_candidate_rejections
+                ),
+                trajectory_predicted_xy=(
+                    self._last_trajectory_predicted_xy
+                ),
+                trajectory_gate_px=(
+                    self._last_trajectory_gate_px
+                ),
+                trajectory_lock_depth=int(
+                    self._last_trajectory_lock_depth
+                ),
+                trajectory_topk_selected_xy=(
+                    self._last_trajectory_topk_selected_xy
+                ),
+                trajectory_bootstrap_straightness=(
+                    self._last_trajectory_bootstrap_straightness
                 ),
                 approach_total_motion_px=float(
                     self._last_approach_total_motion_px

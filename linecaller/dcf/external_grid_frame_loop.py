@@ -461,6 +461,17 @@ class ExternalFrameResult:
     approach_direction_rejections: int = 0
     approach_down_px_per_frame: float | None = None
     approach_min_down_px_per_frame: float | None = None
+    trajectory_lock_state: str | None = None
+    trajectory_components_considered: int = 0
+    trajectory_topk_selected: int = 0
+    trajectory_candidate_rejections: int = 0
+    trajectory_predicted_xy: tuple[float, float] | None = None
+    trajectory_gate_px: float | None = None
+    trajectory_lock_depth: int = 0
+    trajectory_topk_selected_xy: tuple[
+        tuple[float, float], ...
+    ] = ()
+    trajectory_bootstrap_straightness: float | None = None
 
     @property
     def bingo_cells(self) -> tuple[UpConfirmation, ...]:

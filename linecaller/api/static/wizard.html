@@ -415,6 +415,15 @@
         <div class="stat"><span>Direction rejects</span><b id="directionRejects">0</b></div>
         <div class="stat"><span>Down px/frame</span><b id="approachDownRate">-</b></div>
         <div class="stat"><span>Min down px/frame</span><b id="approachMinDown">-</b></div>
+        <div class="stat"><span>Track lock</span><b id="trackLock">-</b></div>
+        <div class="stat"><span>Track depth</span><b id="trackDepth">0</b></div>
+        <div class="stat"><span>Top-3 considered</span><b id="top3Considered">0</b></div>
+        <div class="stat"><span>Top-3 selected</span><b id="top3Selected">0</b></div>
+        <div class="stat"><span>Top-3 rejects</span><b id="top3Rejects">0</b></div>
+        <div class="stat"><span>Track predicted xy</span><b id="trackPredXY">-</b></div>
+        <div class="stat"><span>Track gate px</span><b id="trackGate">-</b></div>
+        <div class="stat"><span>Top-3 xy</span><b id="top3XY">-</b></div>
+        <div class="stat"><span>Bootstrap straightness</span><b id="trackStraight">-</b></div>
         <div class="stat"><span>Total motion px</span><b id="approachMotion">-</b></div>
         <div class="stat"><span>Min motion px</span><b id="approachMinMotion">-</b></div>
         <div class="stat"><span>Pred error px</span><b id="approachPredError">-</b></div>
@@ -563,6 +572,7 @@
     telemetry = {
       z0Total:0, upTotal:0, outTotal:0, lineGuards:0,
       projMatchesTotal:0, projRejectsTotal:0, approachRejectsTotal:0,
+      top3RejectsTotal:0,
       contactRecoveriesTotal:0, lastRecovery:null,
       lastApproachReason:null, lastCandidateCell:null,
       lastProjectedAnchor:null,
@@ -574,7 +584,8 @@
     };
     for (const id of ['ballPixels','rawBlobs','footprints','blurMerges',
                       'projMatches','projRejects','approachRejects','motionObs',
-                      'directionRejects',
+                      'directionRejects','trackDepth','top3Considered',
+                      'top3Selected','top3Rejects',
                       'contactRecoveries','extCellHits','rawZ0Total',
                       'scaleLow','scaleHigh','rasterAccepts',
                       'z0Total','upTotal','outTotal','lineGuards']) {
@@ -582,6 +593,8 @@
     }
     for (const id of ['lastZ0','lastOut','predCell','recoveryFrame',
                       'approachReason','approachDownRate','approachMinDown',
+                      'trackLock','trackPredXY','trackGate','top3XY',
+                      'trackStraight',
                       'approachMotion','approachMinMotion',
                       'approachPredError','approachAllowedError',
                       'candidateCell','projectedAnchor','scaleReason',
@@ -619,6 +632,52 @@
     $('directionRejects').textContent =
       Number($('directionRejects').textContent || 0) + directionRejects;
     $('motionObs').textContent = d.motion_history_observations ?? 0;
+
+    const top3Rejects = Number(
+      d.trajectory_candidate_rejections || 0
+    );
+    telemetry.top3RejectsTotal += top3Rejects;
+    $('trackLock').textContent = d.trajectory_lock_state || '-';
+    $('trackDepth').textContent =
+      Number(d.trajectory_lock_depth || 0);
+    $('top3Considered').textContent =
+      Number(d.trajectory_components_considered || 0);
+    $('top3Selected').textContent =
+      Number(d.trajectory_topk_selected || 0);
+    $('top3Rejects').textContent = telemetry.top3RejectsTotal;
+
+    const trackPred = d.trajectory_predicted_xy;
+    $('trackPredXY').textContent =
+      Array.isArray(trackPred) && trackPred.length === 2
+        ? `${Number(trackPred[0]).toFixed(1)},${Number(trackPred[1]).toFixed(1)}`
+        : '-';
+    $('trackGate').textContent =
+      (d.trajectory_gate_px === null ||
+       d.trajectory_gate_px === undefined)
+        ? '-'
+        : Number(d.trajectory_gate_px).toFixed(2);
+    const selectedXY = d.trajectory_topk_selected_xy;
+    $('top3XY').textContent =
+      Array.isArray(selectedXY) && selectedXY.length
+        ? selectedXY.map(
+            p => `(${Number(p[0]).toFixed(1)},${Number(p[1]).toFixed(1)})`
+          ).join(' ')
+        : '-';
+    $('trackStraight').textContent =
+      (d.trajectory_bootstrap_straightness === null ||
+       d.trajectory_bootstrap_straightness === undefined)
+        ? '-'
+        : Number(d.trajectory_bootstrap_straightness).toFixed(3);
+
+    if (top3Rejects > 0) {
+      appendTelemetryEvent(
+        `${videoFrameNo} TOP3_REJECT x${top3Rejects}` +
+        ` lock=${$('trackLock').textContent}` +
+        ` pred=${$('trackPredXY').textContent}` +
+        ` gate=${$('trackGate').textContent}px`
+      );
+    }
+
     $('predCell').textContent =
       (d.predicted_z0_cell === null || d.predicted_z0_cell === undefined)
         ? '-'

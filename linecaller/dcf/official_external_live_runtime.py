@@ -75,6 +75,14 @@ class OfficialExternalLiveConfig:
     contact_recovery_min_value_ratio: float = 0.55
     contact_recovery_max_candidates: int = 3
 
+    # CP-0036.2.4.6. Historical default stays OFF; Wizard/API opts in.
+    predicted_top3_candidates: bool = False
+    trajectory_candidate_top_k: int = 3
+    trajectory_candidate_min_gate_px: float = 5.0
+    trajectory_candidate_gate_scale: float = 4.75
+    trajectory_bootstrap_min_straightness: float = 0.70
+    trajectory_lock_max_misses: int = 2
+
     def __post_init__(self) -> None:
         if self.glow_hold_s <= 0.0:
             raise ValueError("glow_hold_s must be > 0")
@@ -122,6 +130,30 @@ class OfficialExternalLiveConfig:
         if self.contact_recovery_max_candidates < 1:
             raise ValueError(
                 "contact_recovery_max_candidates must be >= 1"
+            )
+        if self.trajectory_candidate_top_k < 1:
+            raise ValueError(
+                "trajectory_candidate_top_k must be >= 1"
+            )
+        if self.trajectory_candidate_min_gate_px <= 0.0:
+            raise ValueError(
+                "trajectory_candidate_min_gate_px must be > 0"
+            )
+        if self.trajectory_candidate_gate_scale <= 0.0:
+            raise ValueError(
+                "trajectory_candidate_gate_scale must be > 0"
+            )
+        if not (
+            0.0
+            < self.trajectory_bootstrap_min_straightness
+            <= 1.0
+        ):
+            raise ValueError(
+                "trajectory_bootstrap_min_straightness must be in (0,1]"
+            )
+        if self.trajectory_lock_max_misses < 0:
+            raise ValueError(
+                "trajectory_lock_max_misses must be >= 0"
             )
 
 
@@ -318,6 +350,24 @@ class OfficialExternalLiveRuntime:
                 ),
                 contact_recovery_max_candidates=(
                     c.contact_recovery_max_candidates
+                ),
+                predicted_top3_candidates=(
+                    c.predicted_top3_candidates
+                ),
+                trajectory_candidate_top_k=(
+                    c.trajectory_candidate_top_k
+                ),
+                trajectory_candidate_min_gate_px=(
+                    c.trajectory_candidate_min_gate_px
+                ),
+                trajectory_candidate_gate_scale=(
+                    c.trajectory_candidate_gate_scale
+                ),
+                trajectory_bootstrap_min_straightness=(
+                    c.trajectory_bootstrap_min_straightness
+                ),
+                trajectory_lock_max_misses=(
+                    c.trajectory_lock_max_misses
                 ),
                 **common,
             )

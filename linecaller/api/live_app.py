@@ -169,6 +169,12 @@ class LiveRuntimeRegistry:
                 contact_recovery_min_down_bu_per_frame=0.05,
                 contact_recovery_min_value_ratio=0.55,
                 contact_recovery_max_candidates=3,
+                predicted_top3_candidates=True,
+                trajectory_candidate_top_k=3,
+                trajectory_candidate_min_gate_px=5.0,
+                trajectory_candidate_gate_scale=4.75,
+                trajectory_bootstrap_min_straightness=0.70,
+                trajectory_lock_max_misses=2,
             ),
         )
 
@@ -279,6 +285,7 @@ def health() -> dict[str, Any]:
         "wizard_session_feature_version": "CP-0036.2.4.3",
         "tiny_ball_scale_feature_version": "CP-0036.2.4.4",
         "approach_direction_feature_version": "CP-0036.2.4.5",
+        "predicted_top3_feature_version": "CP-0036.2.4.6",
         "configured": registry.runtime is not None,
     }
 
@@ -474,6 +481,30 @@ async def process_frame(
         payload["approach_min_down_px_per_frame"] = (
             loop.approach_min_down_px_per_frame
         )
+        payload["trajectory_lock_state"] = loop.trajectory_lock_state
+        payload["trajectory_components_considered"] = (
+            loop.trajectory_components_considered
+        )
+        payload["trajectory_topk_selected"] = (
+            loop.trajectory_topk_selected
+        )
+        payload["trajectory_candidate_rejections"] = (
+            loop.trajectory_candidate_rejections
+        )
+        payload["trajectory_predicted_xy"] = (
+            None
+            if loop.trajectory_predicted_xy is None
+            else list(loop.trajectory_predicted_xy)
+        )
+        payload["trajectory_gate_px"] = loop.trajectory_gate_px
+        payload["trajectory_lock_depth"] = loop.trajectory_lock_depth
+        payload["trajectory_topk_selected_xy"] = [
+            list(point)
+            for point in loop.trajectory_topk_selected_xy
+        ]
+        payload["trajectory_bootstrap_straightness"] = (
+            loop.trajectory_bootstrap_straightness
+        )
         payload["approach_total_motion_px"] = loop.approach_total_motion_px
         payload["approach_min_motion_px"] = loop.approach_min_motion_px
         payload["approach_prediction_error_px"] = loop.approach_prediction_error_px
@@ -540,6 +571,15 @@ async def process_frame(
         payload["approach_direction_rejections"] = 0
         payload["approach_down_px_per_frame"] = None
         payload["approach_min_down_px_per_frame"] = None
+        payload["trajectory_lock_state"] = None
+        payload["trajectory_components_considered"] = 0
+        payload["trajectory_topk_selected"] = 0
+        payload["trajectory_candidate_rejections"] = 0
+        payload["trajectory_predicted_xy"] = None
+        payload["trajectory_gate_px"] = None
+        payload["trajectory_lock_depth"] = 0
+        payload["trajectory_topk_selected_xy"] = []
+        payload["trajectory_bootstrap_straightness"] = None
         payload["approach_total_motion_px"] = 0.0
         payload["approach_min_motion_px"] = 0.0
         payload["approach_prediction_error_px"] = None
