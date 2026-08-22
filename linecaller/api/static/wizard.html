@@ -424,6 +424,10 @@
         <div class="stat"><span>Track gate px</span><b id="trackGate">-</b></div>
         <div class="stat"><span>Top-3 xy</span><b id="top3XY">-</b></div>
         <div class="stat"><span>Bootstrap straightness</span><b id="trackStraight">-</b></div>
+        <div class="stat"><span>Boot scale rejects</span><b id="bootScaleRejects">0</b></div>
+        <div class="stat"><span>Boot observed px</span><b id="bootScaleObserved">-</b></div>
+        <div class="stat"><span>Boot expected px</span><b id="bootScaleExpected">-</b></div>
+        <div class="stat"><span>Boot scale ratio</span><b id="bootScaleRatio">-</b></div>
         <div class="stat"><span>Total motion px</span><b id="approachMotion">-</b></div>
         <div class="stat"><span>Min motion px</span><b id="approachMinMotion">-</b></div>
         <div class="stat"><span>Pred error px</span><b id="approachPredError">-</b></div>
@@ -572,7 +576,9 @@
     telemetry = {
       z0Total:0, upTotal:0, outTotal:0, lineGuards:0,
       projMatchesTotal:0, projRejectsTotal:0, approachRejectsTotal:0,
-      top3RejectsTotal:0,
+      top3RejectsTotal:0, bootScaleRejectsTotal:0,
+      lastBootScaleObserved:null, lastBootScaleExpected:null,
+      lastBootScaleRatio:null,
       contactRecoveriesTotal:0, lastRecovery:null,
       lastApproachReason:null, lastCandidateCell:null,
       lastProjectedAnchor:null,
@@ -585,7 +591,7 @@
     for (const id of ['ballPixels','rawBlobs','footprints','blurMerges',
                       'projMatches','projRejects','approachRejects','motionObs',
                       'directionRejects','trackDepth','top3Considered',
-                      'top3Selected','top3Rejects',
+                      'top3Selected','top3Rejects','bootScaleRejects',
                       'contactRecoveries','extCellHits','rawZ0Total',
                       'scaleLow','scaleHigh','rasterAccepts',
                       'z0Total','upTotal','outTotal','lineGuards']) {
@@ -594,7 +600,8 @@
     for (const id of ['lastZ0','lastOut','predCell','recoveryFrame',
                       'approachReason','approachDownRate','approachMinDown',
                       'trackLock','trackPredXY','trackGate','top3XY',
-                      'trackStraight',
+                      'trackStraight','bootScaleObserved',
+                      'bootScaleExpected','bootScaleRatio',
                       'approachMotion','approachMinMotion',
                       'approachPredError','approachAllowedError',
                       'candidateCell','projectedAnchor','scaleReason',
@@ -675,6 +682,46 @@
         ` lock=${$('trackLock').textContent}` +
         ` pred=${$('trackPredXY').textContent}` +
         ` gate=${$('trackGate').textContent}px`
+      );
+    }
+
+    const bootScaleRejects = Number(
+      d.trajectory_bootstrap_scale_rejections || 0
+    );
+    telemetry.bootScaleRejectsTotal += bootScaleRejects;
+    $('bootScaleRejects').textContent =
+      telemetry.bootScaleRejectsTotal;
+
+    if (bootScaleRejects > 0) {
+      const bootObs = d.trajectory_bootstrap_scale_observed_px;
+      const bootExp = d.trajectory_bootstrap_scale_expected_px;
+      const bootRatio = d.trajectory_bootstrap_scale_ratio;
+      if (bootObs !== null && bootObs !== undefined) {
+        telemetry.lastBootScaleObserved = Number(bootObs);
+      }
+      if (bootExp !== null && bootExp !== undefined) {
+        telemetry.lastBootScaleExpected = Number(bootExp);
+      }
+      if (bootRatio !== null && bootRatio !== undefined) {
+        telemetry.lastBootScaleRatio = Number(bootRatio);
+      }
+      $('bootScaleObserved').textContent =
+        telemetry.lastBootScaleObserved === null
+          ? '-'
+          : telemetry.lastBootScaleObserved.toFixed(2);
+      $('bootScaleExpected').textContent =
+        telemetry.lastBootScaleExpected === null
+          ? '-'
+          : telemetry.lastBootScaleExpected.toFixed(2);
+      $('bootScaleRatio').textContent =
+        telemetry.lastBootScaleRatio === null
+          ? '-'
+          : telemetry.lastBootScaleRatio.toFixed(3);
+      appendTelemetryEvent(
+        `${videoFrameNo} BOOT_SCALE_REJECT x${bootScaleRejects}` +
+        ` obs=${$('bootScaleObserved').textContent}` +
+        ` exp=${$('bootScaleExpected').textContent}` +
+        ` ratio=${$('bootScaleRatio').textContent}`
       );
     }
 

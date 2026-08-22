@@ -5,9 +5,14 @@ from dataclasses import dataclass
 import math
 from typing import Iterable
 
+import cv2
 import numpy as np
 
-from linecaller.dcf.external_grid_frame_loop import BallComponent
+from linecaller.dcf.external_grid_frame_loop import (
+    BallComponent,
+    ExternalGridCalibration,
+    rasterized_scale_compatible,
+)
 
 
 @dataclass(frozen=True)
@@ -17,6 +22,79 @@ class TrajectoryPrediction:
     speed_px_per_frame: float
     last_component: BallComponent
     history_depth: int
+
+
+class PerspectiveBallScaleModel:
+    """Continuous homography scale evidence; no interior grid traversal."""
+
+    def __init__(self, calibration: ExternalGridCalibration) -> None:
+        self.calibration = calibration
+        cfg = calibration.config
+        court_y = cfg.court_y_bu(
+            __import__(
+                "linecaller.dcf.external_grid_frame_loop",
+                fromlist=["CalibrationCoverage"],
+            ).CalibrationCoverage.parse(calibration.coverage)
+        )
+        court = np.asarray(
+            (
+                (0.0, court_y),
+                (cfg.court_x_bu, court_y),
+                (cfg.court_x_bu, 0.0),
+                (0.0, 0.0),
+            ),
+            dtype=np.float32,
+        )
+        image = np.asarray(
+            calibration.image_points,
+            dtype=np.float32,
+        )
+        self._top_to_image = cv2.getPerspectiveTransform(
+            court,
+            image,
+        )
+        self._image_to_top = cv2.getPerspectiveTransform(
+            image,
+            court,
+        )
+
+    def expected_diameter_px(
+        self,
+        image_xy: tuple[float, float],
+    ) -> float | None:
+        p = np.asarray(
+            [[[float(image_xy[0]), float(image_xy[1])]]],
+            dtype=np.float32,
+        )
+        floor = cv2.perspectiveTransform(
+            p,
+            self._image_to_top,
+        )[0, 0]
+        x_bu = float(floor[0])
+        y_bu = float(floor[1])
+        if not (math.isfinite(x_bu) and math.isfinite(y_bu)):
+            return None
+
+        lateral = np.asarray(
+            [[
+                [x_bu - 0.5, y_bu],
+                [x_bu + 0.5, y_bu],
+            ]],
+            dtype=np.float32,
+        )
+        projected = cv2.perspectiveTransform(
+            lateral,
+            self._top_to_image,
+        )[0]
+        expected = float(
+            math.dist(
+                tuple(float(v) for v in projected[0]),
+                tuple(float(v) for v in projected[1]),
+            )
+        )
+        if not math.isfinite(expected) or expected <= 0.0:
+            return None
+        return max(0.5, expected)
 
 
 @dataclass(frozen=True)
@@ -29,6 +107,10 @@ class PredictedTopKSelection:
     rejected_by_distance: int
     history_depth: int
     bootstrap_straightness: float | None = None
+    bootstrap_scale_rejections: int = 0
+    bootstrap_scale_observed_px: float | None = None
+    bootstrap_scale_expected_px: float | None = None
+    bootstrap_scale_ratio: float | None = None
 
 
 class PredictedTopKSelector:
@@ -49,6 +131,10 @@ class PredictedTopKSelector:
         gate_scale: float = 4.75,
         bootstrap_min_motion_px: float = 1.5,
         bootstrap_min_straightness: float = 0.70,
+        calibration: ExternalGridCalibration | None = None,
+        bootstrap_scale_guard: bool = False,
+        bootstrap_min_scale_ratio: float = 0.35,
+        bootstrap_max_scale_ratio: float = 2.20,
         max_misses: int = 2,
     ) -> None:
         self.top_k = int(top_k)
@@ -59,6 +145,18 @@ class PredictedTopKSelector:
         self.bootstrap_min_motion_px = float(bootstrap_min_motion_px)
         self.bootstrap_min_straightness = float(
             bootstrap_min_straightness
+        )
+        self.bootstrap_scale_guard = bool(bootstrap_scale_guard)
+        self.bootstrap_min_scale_ratio = float(
+            bootstrap_min_scale_ratio
+        )
+        self.bootstrap_max_scale_ratio = float(
+            bootstrap_max_scale_ratio
+        )
+        self._perspective_scale = (
+            PerspectiveBallScaleModel(calibration)
+            if calibration is not None
+            else None
         )
         self.max_misses = int(max_misses)
 
@@ -82,6 +180,22 @@ class PredictedTopKSelector:
             raise ValueError(
                 "bootstrap_min_straightness must be in (0,1]"
             )
+        if self.bootstrap_min_scale_ratio <= 0.0:
+            raise ValueError(
+                "bootstrap_min_scale_ratio must be > 0"
+            )
+        if (
+            self.bootstrap_max_scale_ratio
+            < self.bootstrap_min_scale_ratio
+        ):
+            raise ValueError(
+                "bootstrap_max_scale_ratio must be >= "
+                "bootstrap_min_scale_ratio"
+            )
+        if self.bootstrap_scale_guard and self._perspective_scale is None:
+            raise ValueError(
+                "bootstrap_scale_guard requires calibration"
+            )
         if self.max_misses < 0:
             raise ValueError("max_misses must be >= 0")
 
@@ -89,6 +203,7 @@ class PredictedTopKSelector:
             maxlen=self.history_frames + 1
         )
         self._misses = 0
+        self._reset_bootstrap_scale_telemetry()
 
     @property
     def locked(self) -> bool:
@@ -105,6 +220,48 @@ class PredictedTopKSelector:
     def reset(self) -> None:
         self._history.clear()
         self._misses = 0
+
+    def _reset_bootstrap_scale_telemetry(self) -> None:
+        self._bootstrap_scale_rejections = 0
+        self._bootstrap_scale_observed_px: float | None = None
+        self._bootstrap_scale_expected_px: float | None = None
+        self._bootstrap_scale_ratio: float | None = None
+
+    def _bootstrap_scale_ok(
+        self,
+        component: BallComponent,
+    ) -> bool:
+        if not self.bootstrap_scale_guard:
+            return True
+        if self._perspective_scale is None:
+            return False
+
+        expected = self._perspective_scale.expected_diameter_px(
+            component.centroid_xy
+        )
+        if expected is None:
+            self._bootstrap_scale_rejections += 1
+            self._bootstrap_scale_observed_px = float(
+                component.scale_px
+            )
+            self._bootstrap_scale_expected_px = None
+            self._bootstrap_scale_ratio = None
+            return False
+
+        observed = float(component.scale_px)
+        ratio = observed / max(0.5, float(expected))
+        compatible = rasterized_scale_compatible(
+            observed,
+            expected,
+            self.bootstrap_min_scale_ratio,
+            self.bootstrap_max_scale_ratio,
+        )
+        if not compatible:
+            self._bootstrap_scale_rejections += 1
+            self._bootstrap_scale_observed_px = observed
+            self._bootstrap_scale_expected_px = float(expected)
+            self._bootstrap_scale_ratio = float(ratio)
+        return bool(compatible)
 
     @staticmethod
     def _compatible_scale(
@@ -228,6 +385,7 @@ class PredictedTopKSelector:
                 component
                 for component in components
                 if not component.recovered
+                and self._bootstrap_scale_ok(component)
                 and self._compatible_scale(target, component)
             ]
             if not strict:
@@ -269,6 +427,8 @@ class PredictedTopKSelector:
 
         for current in components:
             if current.recovered:
+                continue
+            if not self._bootstrap_scale_ok(current):
                 continue
 
             prior = self._strict_prior_chain(
@@ -380,6 +540,7 @@ class PredictedTopKSelector:
         ],
     ) -> PredictedTopKSelection:
         frame_no = int(frame_no)
+        self._reset_bootstrap_scale_telemetry()
         bootstrap_straightness: float | None = None
         bootstrapped = False
 
@@ -402,6 +563,18 @@ class PredictedTopKSelector:
                 rejected_by_distance=len(components),
                 history_depth=0,
                 bootstrap_straightness=bootstrap_straightness,
+                bootstrap_scale_rejections=(
+                    self._bootstrap_scale_rejections
+                ),
+                bootstrap_scale_observed_px=(
+                    self._bootstrap_scale_observed_px
+                ),
+                bootstrap_scale_expected_px=(
+                    self._bootstrap_scale_expected_px
+                ),
+                bootstrap_scale_ratio=(
+                    self._bootstrap_scale_ratio
+                ),
             )
 
         last = prediction.last_component
@@ -466,4 +639,16 @@ class PredictedTopKSelector:
             ),
             history_depth=self.history_depth,
             bootstrap_straightness=bootstrap_straightness,
+            bootstrap_scale_rejections=(
+                self._bootstrap_scale_rejections
+            ),
+            bootstrap_scale_observed_px=(
+                self._bootstrap_scale_observed_px
+            ),
+            bootstrap_scale_expected_px=(
+                self._bootstrap_scale_expected_px
+            ),
+            bootstrap_scale_ratio=(
+                self._bootstrap_scale_ratio
+            ),
         )

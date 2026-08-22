@@ -174,6 +174,9 @@ class LiveRuntimeRegistry:
                 trajectory_candidate_min_gate_px=5.0,
                 trajectory_candidate_gate_scale=4.75,
                 trajectory_bootstrap_min_straightness=0.70,
+                trajectory_bootstrap_scale_guard=True,
+                trajectory_bootstrap_min_scale_ratio=0.35,
+                trajectory_bootstrap_max_scale_ratio=2.20,
                 trajectory_lock_max_misses=2,
             ),
         )
@@ -286,6 +289,7 @@ def health() -> dict[str, Any]:
         "tiny_ball_scale_feature_version": "CP-0036.2.4.4",
         "approach_direction_feature_version": "CP-0036.2.4.5",
         "predicted_top3_feature_version": "CP-0036.2.4.6",
+        "perspective_bootstrap_scale_feature_version": "CP-0036.2.4.6.1",
         "configured": registry.runtime is not None,
     }
 
@@ -505,6 +509,18 @@ async def process_frame(
         payload["trajectory_bootstrap_straightness"] = (
             loop.trajectory_bootstrap_straightness
         )
+        payload["trajectory_bootstrap_scale_rejections"] = (
+            loop.trajectory_bootstrap_scale_rejections
+        )
+        payload["trajectory_bootstrap_scale_observed_px"] = (
+            loop.trajectory_bootstrap_scale_observed_px
+        )
+        payload["trajectory_bootstrap_scale_expected_px"] = (
+            loop.trajectory_bootstrap_scale_expected_px
+        )
+        payload["trajectory_bootstrap_scale_ratio"] = (
+            loop.trajectory_bootstrap_scale_ratio
+        )
         payload["approach_total_motion_px"] = loop.approach_total_motion_px
         payload["approach_min_motion_px"] = loop.approach_min_motion_px
         payload["approach_prediction_error_px"] = loop.approach_prediction_error_px
@@ -580,6 +596,10 @@ async def process_frame(
         payload["trajectory_lock_depth"] = 0
         payload["trajectory_topk_selected_xy"] = []
         payload["trajectory_bootstrap_straightness"] = None
+        payload["trajectory_bootstrap_scale_rejections"] = 0
+        payload["trajectory_bootstrap_scale_observed_px"] = None
+        payload["trajectory_bootstrap_scale_expected_px"] = None
+        payload["trajectory_bootstrap_scale_ratio"] = None
         payload["approach_total_motion_px"] = 0.0
         payload["approach_min_motion_px"] = 0.0
         payload["approach_prediction_error_px"] = None

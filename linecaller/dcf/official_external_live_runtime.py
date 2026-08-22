@@ -81,6 +81,9 @@ class OfficialExternalLiveConfig:
     trajectory_candidate_min_gate_px: float = 5.0
     trajectory_candidate_gate_scale: float = 4.75
     trajectory_bootstrap_min_straightness: float = 0.70
+    trajectory_bootstrap_scale_guard: bool = False
+    trajectory_bootstrap_min_scale_ratio: float = 0.35
+    trajectory_bootstrap_max_scale_ratio: float = 2.20
     trajectory_lock_max_misses: int = 2
 
     def __post_init__(self) -> None:
@@ -150,6 +153,18 @@ class OfficialExternalLiveConfig:
         ):
             raise ValueError(
                 "trajectory_bootstrap_min_straightness must be in (0,1]"
+            )
+        if self.trajectory_bootstrap_min_scale_ratio <= 0.0:
+            raise ValueError(
+                "trajectory_bootstrap_min_scale_ratio must be > 0"
+            )
+        if (
+            self.trajectory_bootstrap_max_scale_ratio
+            < self.trajectory_bootstrap_min_scale_ratio
+        ):
+            raise ValueError(
+                "trajectory_bootstrap_max_scale_ratio must be >= "
+                "trajectory_bootstrap_min_scale_ratio"
             )
         if self.trajectory_lock_max_misses < 0:
             raise ValueError(
@@ -365,6 +380,15 @@ class OfficialExternalLiveRuntime:
                 ),
                 trajectory_bootstrap_min_straightness=(
                     c.trajectory_bootstrap_min_straightness
+                ),
+                trajectory_bootstrap_scale_guard=(
+                    c.trajectory_bootstrap_scale_guard
+                ),
+                trajectory_bootstrap_min_scale_ratio=(
+                    c.trajectory_bootstrap_min_scale_ratio
+                ),
+                trajectory_bootstrap_max_scale_ratio=(
+                    c.trajectory_bootstrap_max_scale_ratio
                 ),
                 trajectory_lock_max_misses=(
                     c.trajectory_lock_max_misses

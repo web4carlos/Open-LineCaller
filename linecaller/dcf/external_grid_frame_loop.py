@@ -472,6 +472,10 @@ class ExternalFrameResult:
         tuple[float, float], ...
     ] = ()
     trajectory_bootstrap_straightness: float | None = None
+    trajectory_bootstrap_scale_rejections: int = 0
+    trajectory_bootstrap_scale_observed_px: float | None = None
+    trajectory_bootstrap_scale_expected_px: float | None = None
+    trajectory_bootstrap_scale_ratio: float | None = None
 
     @property
     def bingo_cells(self) -> tuple[UpConfirmation, ...]:

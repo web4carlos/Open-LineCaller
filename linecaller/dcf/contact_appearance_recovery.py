@@ -67,6 +67,9 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         trajectory_candidate_min_gate_px: float = 5.0,
         trajectory_candidate_gate_scale: float = 4.75,
         trajectory_bootstrap_min_straightness: float = 0.70,
+        trajectory_bootstrap_scale_guard: bool = False,
+        trajectory_bootstrap_min_scale_ratio: float = 0.35,
+        trajectory_bootstrap_max_scale_ratio: float = 2.20,
         trajectory_lock_max_misses: int = 2,
         contact_recovery_min_value_ratio: float = 0.55,
         contact_recovery_max_candidates: int = 3,
@@ -102,6 +105,15 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         )
         self.trajectory_bootstrap_min_straightness = float(
             trajectory_bootstrap_min_straightness
+        )
+        self.trajectory_bootstrap_scale_guard = bool(
+            trajectory_bootstrap_scale_guard
+        )
+        self.trajectory_bootstrap_min_scale_ratio = float(
+            trajectory_bootstrap_min_scale_ratio
+        )
+        self.trajectory_bootstrap_max_scale_ratio = float(
+            trajectory_bootstrap_max_scale_ratio
         )
         self.trajectory_lock_max_misses = int(
             trajectory_lock_max_misses
@@ -150,6 +162,18 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
             raise ValueError(
                 "trajectory_bootstrap_min_straightness must be in (0,1]"
             )
+        if self.trajectory_bootstrap_min_scale_ratio <= 0.0:
+            raise ValueError(
+                "trajectory_bootstrap_min_scale_ratio must be > 0"
+            )
+        if (
+            self.trajectory_bootstrap_max_scale_ratio
+            < self.trajectory_bootstrap_min_scale_ratio
+        ):
+            raise ValueError(
+                "trajectory_bootstrap_max_scale_ratio must be >= "
+                "trajectory_bootstrap_min_scale_ratio"
+            )
         if self.trajectory_lock_max_misses < 0:
             raise ValueError(
                 "trajectory_lock_max_misses must be >= 0"
@@ -170,6 +194,16 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
             bootstrap_min_motion_px=1.5,
             bootstrap_min_straightness=(
                 self.trajectory_bootstrap_min_straightness
+            ),
+            calibration=self.calibration,
+            bootstrap_scale_guard=(
+                self.trajectory_bootstrap_scale_guard
+            ),
+            bootstrap_min_scale_ratio=(
+                self.trajectory_bootstrap_min_scale_ratio
+            ),
+            bootstrap_max_scale_ratio=(
+                self.trajectory_bootstrap_max_scale_ratio
             ),
             max_misses=self.trajectory_lock_max_misses,
         )
@@ -231,6 +265,16 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
             tuple[float, float], ...
         ] = ()
         self._last_trajectory_bootstrap_straightness: (
+            float | None
+        ) = None
+        self._last_trajectory_bootstrap_scale_rejections = 0
+        self._last_trajectory_bootstrap_scale_observed_px: (
+            float | None
+        ) = None
+        self._last_trajectory_bootstrap_scale_expected_px: (
+            float | None
+        ) = None
+        self._last_trajectory_bootstrap_scale_ratio: (
             float | None
         ) = None
 
@@ -782,6 +826,18 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
             self._last_trajectory_bootstrap_straightness = (
                 selection.bootstrap_straightness
             )
+            self._last_trajectory_bootstrap_scale_rejections = (
+                selection.bootstrap_scale_rejections
+            )
+            self._last_trajectory_bootstrap_scale_observed_px = (
+                selection.bootstrap_scale_observed_px
+            )
+            self._last_trajectory_bootstrap_scale_expected_px = (
+                selection.bootstrap_scale_expected_px
+            )
+            self._last_trajectory_bootstrap_scale_ratio = (
+                selection.bootstrap_scale_ratio
+            )
 
         raw_candidates, boundary_guard_rejections = (
             ExternalGridFrameLoop._find_z0_candidates(
@@ -928,6 +984,18 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
                 ),
                 trajectory_bootstrap_straightness=(
                     self._last_trajectory_bootstrap_straightness
+                ),
+                trajectory_bootstrap_scale_rejections=int(
+                    self._last_trajectory_bootstrap_scale_rejections
+                ),
+                trajectory_bootstrap_scale_observed_px=(
+                    self._last_trajectory_bootstrap_scale_observed_px
+                ),
+                trajectory_bootstrap_scale_expected_px=(
+                    self._last_trajectory_bootstrap_scale_expected_px
+                ),
+                trajectory_bootstrap_scale_ratio=(
+                    self._last_trajectory_bootstrap_scale_ratio
                 ),
                 approach_total_motion_px=float(
                     self._last_approach_total_motion_px
