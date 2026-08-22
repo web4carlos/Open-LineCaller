@@ -73,6 +73,9 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         trajectory_bootstrap_receiving_side_guard: bool = False,
         trajectory_receiving_side: str | None = None,
         trajectory_bootstrap_net_margin_bu: float = 4.0,
+        trajectory_net_ingress_guard: bool = False,
+        trajectory_net_ingress_depth_bu: float = 36.0,
+        trajectory_net_ingress_min_inward_bu: float = 1.0,
         trajectory_lock_max_misses: int = 2,
         contact_recovery_min_value_ratio: float = 0.55,
         contact_recovery_max_candidates: int = 3,
@@ -128,6 +131,15 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         )
         self.trajectory_bootstrap_net_margin_bu = float(
             trajectory_bootstrap_net_margin_bu
+        )
+        self.trajectory_net_ingress_guard = bool(
+            trajectory_net_ingress_guard
+        )
+        self.trajectory_net_ingress_depth_bu = float(
+            trajectory_net_ingress_depth_bu
+        )
+        self.trajectory_net_ingress_min_inward_bu = float(
+            trajectory_net_ingress_min_inward_bu
         )
         self.trajectory_lock_max_misses = int(
             trajectory_lock_max_misses
@@ -197,6 +209,14 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
             raise ValueError(
                 "trajectory_bootstrap_net_margin_bu must be >= 0"
             )
+        if self.trajectory_net_ingress_depth_bu <= 0.0:
+            raise ValueError(
+                "trajectory_net_ingress_depth_bu must be > 0"
+            )
+        if self.trajectory_net_ingress_min_inward_bu < 0.0:
+            raise ValueError(
+                "trajectory_net_ingress_min_inward_bu must be >= 0"
+            )
         if self.trajectory_lock_max_misses < 0:
             raise ValueError(
                 "trajectory_lock_max_misses must be >= 0"
@@ -234,6 +254,15 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
             receiving_side=self.trajectory_receiving_side,
             bootstrap_net_margin_bu=(
                 self.trajectory_bootstrap_net_margin_bu
+            ),
+            bootstrap_net_ingress_guard=(
+                self.trajectory_net_ingress_guard
+            ),
+            bootstrap_ingress_depth_bu=(
+                self.trajectory_net_ingress_depth_bu
+            ),
+            bootstrap_min_inward_bu=(
+                self.trajectory_net_ingress_min_inward_bu
             ),
             max_misses=self.trajectory_lock_max_misses,
         )
@@ -312,6 +341,19 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
             tuple[float, float] | None
         ) = None
         self._last_trajectory_bootstrap_scope: str | None = None
+        self._last_trajectory_bootstrap_ingress_rejections = 0
+        self._last_trajectory_bootstrap_ingress_start_y_bu: (
+            float | None
+        ) = None
+        self._last_trajectory_bootstrap_ingress_end_y_bu: (
+            float | None
+        ) = None
+        self._last_trajectory_bootstrap_ingress_delta_bu: (
+            float | None
+        ) = None
+        self._last_trajectory_bootstrap_ingress_reason: (
+            str | None
+        ) = None
 
     def _components(
         self,
@@ -882,6 +924,21 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
             self._last_trajectory_bootstrap_scope = (
                 selection.bootstrap_scope
             )
+            self._last_trajectory_bootstrap_ingress_rejections = (
+                selection.bootstrap_ingress_rejections
+            )
+            self._last_trajectory_bootstrap_ingress_start_y_bu = (
+                selection.bootstrap_ingress_start_y_bu
+            )
+            self._last_trajectory_bootstrap_ingress_end_y_bu = (
+                selection.bootstrap_ingress_end_y_bu
+            )
+            self._last_trajectory_bootstrap_ingress_delta_bu = (
+                selection.bootstrap_ingress_delta_bu
+            )
+            self._last_trajectory_bootstrap_ingress_reason = (
+                selection.bootstrap_ingress_reason
+            )
 
         raw_candidates, boundary_guard_rejections = (
             ExternalGridFrameLoop._find_z0_candidates(
@@ -1049,6 +1106,21 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
                 ),
                 trajectory_bootstrap_scope=(
                     self._last_trajectory_bootstrap_scope
+                ),
+                trajectory_bootstrap_ingress_rejections=int(
+                    self._last_trajectory_bootstrap_ingress_rejections
+                ),
+                trajectory_bootstrap_ingress_start_y_bu=(
+                    self._last_trajectory_bootstrap_ingress_start_y_bu
+                ),
+                trajectory_bootstrap_ingress_end_y_bu=(
+                    self._last_trajectory_bootstrap_ingress_end_y_bu
+                ),
+                trajectory_bootstrap_ingress_delta_bu=(
+                    self._last_trajectory_bootstrap_ingress_delta_bu
+                ),
+                trajectory_bootstrap_ingress_reason=(
+                    self._last_trajectory_bootstrap_ingress_reason
                 ),
                 approach_total_motion_px=float(
                     self._last_approach_total_motion_px

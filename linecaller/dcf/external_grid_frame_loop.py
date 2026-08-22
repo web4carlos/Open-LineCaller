@@ -479,6 +479,11 @@ class ExternalFrameResult:
     trajectory_bootstrap_side_rejections: int = 0
     trajectory_bootstrap_floor_xy_bu: tuple[float, float] | None = None
     trajectory_bootstrap_scope: str | None = None
+    trajectory_bootstrap_ingress_rejections: int = 0
+    trajectory_bootstrap_ingress_start_y_bu: float | None = None
+    trajectory_bootstrap_ingress_end_y_bu: float | None = None
+    trajectory_bootstrap_ingress_delta_bu: float | None = None
+    trajectory_bootstrap_ingress_reason: str | None = None
 
     @property
     def bingo_cells(self) -> tuple[UpConfirmation, ...]:

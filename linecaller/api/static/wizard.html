@@ -431,6 +431,11 @@
         <div class="stat"><span>Boot side rejects</span><b id="bootSideRejects">0</b></div>
         <div class="stat"><span>Boot floor xy BU</span><b id="bootFloorXY">-</b></div>
         <div class="stat"><span>Bootstrap scope</span><b id="bootScope">-</b></div>
+        <div class="stat"><span>Boot ingress rejects</span><b id="bootIngressRejects">0</b></div>
+        <div class="stat"><span>Ingress start Y BU</span><b id="bootIngressStartY">-</b></div>
+        <div class="stat"><span>Ingress end Y BU</span><b id="bootIngressEndY">-</b></div>
+        <div class="stat"><span>Ingress inward BU</span><b id="bootIngressDelta">-</b></div>
+        <div class="stat"><span>Ingress reason</span><b id="bootIngressReason">-</b></div>
         <div class="stat"><span>Runtime mode</span><b id="runtimeCourtMode">-</b></div>
         <div class="stat"><span>Total motion px</span><b id="approachMotion">-</b></div>
         <div class="stat"><span>Min motion px</span><b id="approachMinMotion">-</b></div>
@@ -581,7 +586,7 @@
       z0Total:0, upTotal:0, outTotal:0, lineGuards:0,
       projMatchesTotal:0, projRejectsTotal:0, approachRejectsTotal:0,
       top3RejectsTotal:0, bootScaleRejectsTotal:0,
-      bootSideRejectsTotal:0,
+      bootSideRejectsTotal:0, bootIngressRejectsTotal:0,
       lastBootScaleObserved:null, lastBootScaleExpected:null,
       lastBootScaleRatio:null, lastBootFloorXY:null,
       contactRecoveriesTotal:0, lastRecovery:null,
@@ -597,7 +602,7 @@
                       'projMatches','projRejects','approachRejects','motionObs',
                       'directionRejects','trackDepth','top3Considered',
                       'top3Selected','top3Rejects','bootScaleRejects',
-                      'bootSideRejects',
+                      'bootSideRejects','bootIngressRejects',
                       'contactRecoveries','extCellHits','rawZ0Total',
                       'scaleLow','scaleHigh','rasterAccepts',
                       'z0Total','upTotal','outTotal','lineGuards']) {
@@ -608,7 +613,10 @@
                       'trackLock','trackPredXY','trackGate','top3XY',
                       'trackStraight','bootScaleObserved',
                       'bootScaleExpected','bootScaleRatio',
-                      'bootFloorXY','bootScope','runtimeCourtMode',
+                      'bootFloorXY','bootScope',
+                      'bootIngressStartY','bootIngressEndY',
+                      'bootIngressDelta','bootIngressReason',
+                      'runtimeCourtMode',
                       'approachMotion','approachMinMotion',
                       'approachPredError','approachAllowedError',
                       'candidateCell','projectedAnchor','scaleReason',
@@ -752,10 +760,45 @@
         : '-';
     $('bootScope').textContent =
       d.trajectory_bootstrap_scope || '-';
+    const ingressRejects = Number(
+      d.trajectory_bootstrap_ingress_rejections || 0
+    );
+    telemetry.bootIngressRejectsTotal += ingressRejects;
+    $('bootIngressRejects').textContent =
+      telemetry.bootIngressRejectsTotal;
+
+    const ingressStart = d.trajectory_bootstrap_ingress_start_y_bu;
+    const ingressEnd = d.trajectory_bootstrap_ingress_end_y_bu;
+    const ingressDelta = d.trajectory_bootstrap_ingress_delta_bu;
+    $('bootIngressStartY').textContent =
+      (ingressStart === null || ingressStart === undefined)
+        ? '-'
+        : Number(ingressStart).toFixed(2);
+    $('bootIngressEndY').textContent =
+      (ingressEnd === null || ingressEnd === undefined)
+        ? '-'
+        : Number(ingressEnd).toFixed(2);
+    $('bootIngressDelta').textContent =
+      (ingressDelta === null || ingressDelta === undefined)
+        ? '-'
+        : Number(ingressDelta).toFixed(2);
+    $('bootIngressReason').textContent =
+      d.trajectory_bootstrap_ingress_reason || '-';
+
     $('runtimeCourtMode').textContent =
       d.net_mount_half_court_mode
-        ? 'NET HALF'
-        : 'FULL ENG';
+        ? 'PLAYER NET HALF'
+        : 'FACILITY FULL';
+
+    if (ingressRejects > 0) {
+      appendTelemetryEvent(
+        `${videoFrameNo} BOOT_INGRESS_REJECT x${ingressRejects}` +
+        ` startY=${$('bootIngressStartY').textContent}` +
+        ` endY=${$('bootIngressEndY').textContent}` +
+        ` inward=${$('bootIngressDelta').textContent}` +
+        ` reason=${$('bootIngressReason').textContent}`
+      );
+    }
 
     if (bootSideRejects > 0) {
       appendTelemetryEvent(

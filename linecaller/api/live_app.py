@@ -185,6 +185,9 @@ class LiveRuntimeRegistry:
                 trajectory_bootstrap_net_margin_bu=4.0,
                 trajectory_lock_max_misses=2,
                 net_mount_half_court_mode=net_mount_half_court,
+                trajectory_net_ingress_guard=net_mount_half_court,
+                trajectory_net_ingress_depth_bu=36.0,
+                trajectory_net_ingress_min_inward_bu=1.0,
             ),
         )
 
@@ -298,6 +301,7 @@ def health() -> dict[str, Any]:
         "predicted_top3_feature_version": "CP-0036.2.4.6",
         "perspective_bootstrap_scale_feature_version": "CP-0036.2.4.6.1",
         "net_mount_half_court_feature_version": "CP-0036.2.5",
+        "net_ingress_acquisition_feature_version": "CP-0036.2.6",
         "configured": registry.runtime is not None,
     }
 
@@ -540,6 +544,21 @@ async def process_frame(
         payload["trajectory_bootstrap_scope"] = (
             loop.trajectory_bootstrap_scope
         )
+        payload["trajectory_bootstrap_ingress_rejections"] = (
+            loop.trajectory_bootstrap_ingress_rejections
+        )
+        payload["trajectory_bootstrap_ingress_start_y_bu"] = (
+            loop.trajectory_bootstrap_ingress_start_y_bu
+        )
+        payload["trajectory_bootstrap_ingress_end_y_bu"] = (
+            loop.trajectory_bootstrap_ingress_end_y_bu
+        )
+        payload["trajectory_bootstrap_ingress_delta_bu"] = (
+            loop.trajectory_bootstrap_ingress_delta_bu
+        )
+        payload["trajectory_bootstrap_ingress_reason"] = (
+            loop.trajectory_bootstrap_ingress_reason
+        )
         payload["net_mount_half_court_mode"] = bool(
             runtime.config.net_mount_half_court_mode
         )
@@ -625,6 +644,11 @@ async def process_frame(
         payload["trajectory_bootstrap_side_rejections"] = 0
         payload["trajectory_bootstrap_floor_xy_bu"] = None
         payload["trajectory_bootstrap_scope"] = None
+        payload["trajectory_bootstrap_ingress_rejections"] = 0
+        payload["trajectory_bootstrap_ingress_start_y_bu"] = None
+        payload["trajectory_bootstrap_ingress_end_y_bu"] = None
+        payload["trajectory_bootstrap_ingress_delta_bu"] = None
+        payload["trajectory_bootstrap_ingress_reason"] = None
         payload["net_mount_half_court_mode"] = bool(
             runtime.config.net_mount_half_court_mode
         )

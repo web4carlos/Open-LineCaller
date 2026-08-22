@@ -97,6 +97,13 @@ class OfficialExternalLiveConfig:
     # Historical default remains OFF. HALF_COURT Wizard sessions opt in.
     net_mount_half_court_mode: bool = False
 
+    # CP-0036.2.6 Player-only acquisition. Facilities FULL_COURT does not use
+    # this guard. A new Player track must enter from the local net band and
+    # move into the half before it may own the ball.
+    trajectory_net_ingress_guard: bool = False
+    trajectory_net_ingress_depth_bu: float = 36.0
+    trajectory_net_ingress_min_inward_bu: float = 1.0
+
     def __post_init__(self) -> None:
         if self.glow_hold_s <= 0.0:
             raise ValueError("glow_hold_s must be > 0")
@@ -180,6 +187,19 @@ class OfficialExternalLiveConfig:
         if self.trajectory_bootstrap_net_margin_bu < 0.0:
             raise ValueError(
                 "trajectory_bootstrap_net_margin_bu must be >= 0"
+            )
+        if self.trajectory_net_ingress_depth_bu <= 0.0:
+            raise ValueError(
+                "trajectory_net_ingress_depth_bu must be > 0"
+            )
+        if self.trajectory_net_ingress_min_inward_bu < 0.0:
+            raise ValueError(
+                "trajectory_net_ingress_min_inward_bu must be >= 0"
+            )
+        if self.trajectory_net_ingress_guard and not self.net_mount_half_court_mode:
+            raise ValueError(
+                "trajectory_net_ingress_guard requires "
+                "net_mount_half_court_mode"
             )
         if self.trajectory_lock_max_misses < 0:
             raise ValueError(
@@ -411,6 +431,15 @@ class OfficialExternalLiveRuntime:
                 trajectory_receiving_side=self._receiving_side,
                 trajectory_bootstrap_net_margin_bu=(
                     c.trajectory_bootstrap_net_margin_bu
+                ),
+                trajectory_net_ingress_guard=(
+                    c.trajectory_net_ingress_guard
+                ),
+                trajectory_net_ingress_depth_bu=(
+                    c.trajectory_net_ingress_depth_bu
+                ),
+                trajectory_net_ingress_min_inward_bu=(
+                    c.trajectory_net_ingress_min_inward_bu
                 ),
                 trajectory_lock_max_misses=(
                     c.trajectory_lock_max_misses

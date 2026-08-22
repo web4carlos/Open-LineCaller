@@ -123,6 +123,11 @@ class PredictedTopKSelection:
     bootstrap_side_rejections: int = 0
     bootstrap_floor_xy_bu: tuple[float, float] | None = None
     bootstrap_scope: str | None = None
+    bootstrap_ingress_rejections: int = 0
+    bootstrap_ingress_start_y_bu: float | None = None
+    bootstrap_ingress_end_y_bu: float | None = None
+    bootstrap_ingress_delta_bu: float | None = None
+    bootstrap_ingress_reason: str | None = None
 
 
 class PredictedTopKSelector:
@@ -150,6 +155,9 @@ class PredictedTopKSelector:
         bootstrap_receiving_side_guard: bool = False,
         receiving_side: str | None = None,
         bootstrap_net_margin_bu: float = 4.0,
+        bootstrap_net_ingress_guard: bool = False,
+        bootstrap_ingress_depth_bu: float = 36.0,
+        bootstrap_min_inward_bu: float = 1.0,
         max_misses: int = 2,
     ) -> None:
         self.top_k = int(top_k)
@@ -182,6 +190,15 @@ class PredictedTopKSelector:
             else str(receiving_side).strip().upper()
         )
         self.bootstrap_net_margin_bu = float(bootstrap_net_margin_bu)
+        self.bootstrap_net_ingress_guard = bool(
+            bootstrap_net_ingress_guard
+        )
+        self.bootstrap_ingress_depth_bu = float(
+            bootstrap_ingress_depth_bu
+        )
+        self.bootstrap_min_inward_bu = float(
+            bootstrap_min_inward_bu
+        )
         self.max_misses = int(max_misses)
 
         if self.top_k < 1:
@@ -232,6 +249,23 @@ class PredictedTopKSelector:
                 )
         if self.bootstrap_net_margin_bu < 0.0:
             raise ValueError("bootstrap_net_margin_bu must be >= 0")
+        if self.bootstrap_ingress_depth_bu <= 0.0:
+            raise ValueError("bootstrap_ingress_depth_bu must be > 0")
+        if self.bootstrap_min_inward_bu < 0.0:
+            raise ValueError("bootstrap_min_inward_bu must be >= 0")
+        if self.bootstrap_net_ingress_guard:
+            if self._perspective_scale is None:
+                raise ValueError(
+                    "bootstrap_net_ingress_guard requires calibration"
+                )
+            if (
+                self._perspective_scale.coverage
+                is not CalibrationCoverage.HALF_COURT
+            ):
+                raise ValueError(
+                    "bootstrap_net_ingress_guard requires HALF_COURT "
+                    "calibration"
+                )
         if self.max_misses < 0:
             raise ValueError("max_misses must be >= 0")
 
@@ -241,6 +275,7 @@ class PredictedTopKSelector:
         self._misses = 0
         self._reset_bootstrap_scale_telemetry()
         self._reset_bootstrap_side_telemetry()
+        self._reset_bootstrap_ingress_telemetry()
 
     @property
     def locked(self) -> bool:
@@ -314,6 +349,72 @@ class PredictedTopKSelector:
             self._bootstrap_scope = scope
             return False
 
+        return True
+
+    def _reset_bootstrap_ingress_telemetry(self) -> None:
+        self._bootstrap_ingress_rejections = 0
+        self._bootstrap_ingress_start_y_bu: float | None = None
+        self._bootstrap_ingress_end_y_bu: float | None = None
+        self._bootstrap_ingress_delta_bu: float | None = None
+        self._bootstrap_ingress_reason: str | None = None
+
+    def _bootstrap_ingress_ok(
+        self,
+        chain: list[tuple[int, BallComponent]],
+    ) -> bool:
+        """Require a new Player track to enter from the local net edge.
+
+        This is an acquisition-only guard. Once a trajectory owns the ball,
+        normal prediction/Top-3 tracking continues anywhere in the local
+        half-court. If that lock is lost, reacquisition again fails closed
+        unless a new trajectory enters through the net ingress band.
+
+        Continuous homography coordinates are used only as acquisition
+        evidence. They do not create or traverse an interior decision grid.
+        """
+        if not self.bootstrap_net_ingress_guard:
+            return True
+        model = self._perspective_scale
+        if model is None or not chain:
+            self._bootstrap_ingress_rejections += 1
+            self._bootstrap_ingress_reason = "NO_MODEL_OR_CHAIN"
+            return False
+
+        floor_points: list[tuple[float, float]] = []
+        for _, component in chain:
+            floor = model.floor_xy_bu(component.centroid_xy)
+            if floor is None:
+                self._bootstrap_ingress_rejections += 1
+                self._bootstrap_ingress_reason = "NO_FLOOR"
+                return False
+            floor_points.append(floor)
+
+        start_y = float(floor_points[0][1])
+        end_y = float(floor_points[-1][1])
+        inward = float(start_y - end_y)
+        self._bootstrap_ingress_start_y_bu = start_y
+        self._bootstrap_ingress_end_y_bu = end_y
+        self._bootstrap_ingress_delta_bu = inward
+
+        net_low = float(
+            model.court_y_bu - self.bootstrap_ingress_depth_bu
+        )
+        net_high = float(
+            model.court_y_bu + self.bootstrap_net_margin_bu
+        )
+
+        if not (net_low <= start_y <= net_high):
+            self._bootstrap_ingress_rejections += 1
+            self._bootstrap_ingress_reason = "START_NOT_NET_BAND"
+            return False
+
+        if inward < self.bootstrap_min_inward_bu:
+            self._bootstrap_ingress_rejections += 1
+            self._bootstrap_ingress_reason = "NOT_MOVING_INTO_HALF"
+            return False
+
+        if self._bootstrap_ingress_rejections == 0:
+            self._bootstrap_ingress_reason = "ACCEPTED"
         return True
 
     def _bootstrap_scale_ok(
@@ -546,6 +647,9 @@ class PredictedTopKSelector:
                 continue
 
             chain = [*prior, (int(frame_no), current)]
+            if not self._bootstrap_ingress_ok(chain):
+                continue
+
             total_motion = float(
                 math.dist(
                     chain[0][1].centroid_xy,
@@ -634,6 +738,7 @@ class PredictedTopKSelector:
         frame_no = int(frame_no)
         self._reset_bootstrap_scale_telemetry()
         self._reset_bootstrap_side_telemetry()
+        self._reset_bootstrap_ingress_telemetry()
         bootstrap_straightness: float | None = None
         bootstrapped = False
 
@@ -675,6 +780,21 @@ class PredictedTopKSelector:
                     self._bootstrap_floor_xy_bu
                 ),
                 bootstrap_scope=self._bootstrap_scope,
+                bootstrap_ingress_rejections=(
+                    self._bootstrap_ingress_rejections
+                ),
+                bootstrap_ingress_start_y_bu=(
+                    self._bootstrap_ingress_start_y_bu
+                ),
+                bootstrap_ingress_end_y_bu=(
+                    self._bootstrap_ingress_end_y_bu
+                ),
+                bootstrap_ingress_delta_bu=(
+                    self._bootstrap_ingress_delta_bu
+                ),
+                bootstrap_ingress_reason=(
+                    self._bootstrap_ingress_reason
+                ),
             )
 
         last = prediction.last_component
@@ -758,4 +878,19 @@ class PredictedTopKSelector:
                 self._bootstrap_floor_xy_bu
             ),
             bootstrap_scope=self._bootstrap_scope,
+            bootstrap_ingress_rejections=(
+                self._bootstrap_ingress_rejections
+            ),
+            bootstrap_ingress_start_y_bu=(
+                self._bootstrap_ingress_start_y_bu
+            ),
+            bootstrap_ingress_end_y_bu=(
+                self._bootstrap_ingress_end_y_bu
+            ),
+            bootstrap_ingress_delta_bu=(
+                self._bootstrap_ingress_delta_bu
+            ),
+            bootstrap_ingress_reason=(
+                self._bootstrap_ingress_reason
+            ),
         )
