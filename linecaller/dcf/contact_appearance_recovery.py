@@ -70,6 +70,9 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         trajectory_bootstrap_scale_guard: bool = False,
         trajectory_bootstrap_min_scale_ratio: float = 0.35,
         trajectory_bootstrap_max_scale_ratio: float = 2.20,
+        trajectory_bootstrap_receiving_side_guard: bool = False,
+        trajectory_receiving_side: str | None = None,
+        trajectory_bootstrap_net_margin_bu: float = 4.0,
         trajectory_lock_max_misses: int = 2,
         contact_recovery_min_value_ratio: float = 0.55,
         contact_recovery_max_candidates: int = 3,
@@ -114,6 +117,17 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         )
         self.trajectory_bootstrap_max_scale_ratio = float(
             trajectory_bootstrap_max_scale_ratio
+        )
+        self.trajectory_bootstrap_receiving_side_guard = bool(
+            trajectory_bootstrap_receiving_side_guard
+        )
+        self.trajectory_receiving_side = (
+            None
+            if trajectory_receiving_side is None
+            else str(trajectory_receiving_side).strip().upper()
+        )
+        self.trajectory_bootstrap_net_margin_bu = float(
+            trajectory_bootstrap_net_margin_bu
         )
         self.trajectory_lock_max_misses = int(
             trajectory_lock_max_misses
@@ -174,6 +188,15 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
                 "trajectory_bootstrap_max_scale_ratio must be >= "
                 "trajectory_bootstrap_min_scale_ratio"
             )
+        if self.trajectory_bootstrap_receiving_side_guard:
+            if self.trajectory_receiving_side not in {"FAR", "NEAR"}:
+                raise ValueError(
+                    "trajectory_receiving_side must be FAR or NEAR"
+                )
+        if self.trajectory_bootstrap_net_margin_bu < 0.0:
+            raise ValueError(
+                "trajectory_bootstrap_net_margin_bu must be >= 0"
+            )
         if self.trajectory_lock_max_misses < 0:
             raise ValueError(
                 "trajectory_lock_max_misses must be >= 0"
@@ -204,6 +227,13 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
             ),
             bootstrap_max_scale_ratio=(
                 self.trajectory_bootstrap_max_scale_ratio
+            ),
+            bootstrap_receiving_side_guard=(
+                self.trajectory_bootstrap_receiving_side_guard
+            ),
+            receiving_side=self.trajectory_receiving_side,
+            bootstrap_net_margin_bu=(
+                self.trajectory_bootstrap_net_margin_bu
             ),
             max_misses=self.trajectory_lock_max_misses,
         )
@@ -277,6 +307,11 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
         self._last_trajectory_bootstrap_scale_ratio: (
             float | None
         ) = None
+        self._last_trajectory_bootstrap_side_rejections = 0
+        self._last_trajectory_bootstrap_floor_xy_bu: (
+            tuple[float, float] | None
+        ) = None
+        self._last_trajectory_bootstrap_scope: str | None = None
 
     def _components(
         self,
@@ -838,6 +873,15 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
             self._last_trajectory_bootstrap_scale_ratio = (
                 selection.bootstrap_scale_ratio
             )
+            self._last_trajectory_bootstrap_side_rejections = (
+                selection.bootstrap_side_rejections
+            )
+            self._last_trajectory_bootstrap_floor_xy_bu = (
+                selection.bootstrap_floor_xy_bu
+            )
+            self._last_trajectory_bootstrap_scope = (
+                selection.bootstrap_scope
+            )
 
         raw_candidates, boundary_guard_rejections = (
             ExternalGridFrameLoop._find_z0_candidates(
@@ -996,6 +1040,15 @@ class ContactRecoveryProjectedIdentityExternalGridFrameLoop(
                 ),
                 trajectory_bootstrap_scale_ratio=(
                     self._last_trajectory_bootstrap_scale_ratio
+                ),
+                trajectory_bootstrap_side_rejections=int(
+                    self._last_trajectory_bootstrap_side_rejections
+                ),
+                trajectory_bootstrap_floor_xy_bu=(
+                    self._last_trajectory_bootstrap_floor_xy_bu
+                ),
+                trajectory_bootstrap_scope=(
+                    self._last_trajectory_bootstrap_scope
                 ),
                 approach_total_motion_px=float(
                     self._last_approach_total_motion_px

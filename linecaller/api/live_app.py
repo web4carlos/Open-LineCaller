@@ -148,6 +148,10 @@ class LiveRuntimeRegistry:
             depth_bu=float(depth_bu),
         )
 
+        net_mount_half_court = (
+            str(calibration.coverage).strip().upper() == "HALF_COURT"
+        )
+
         runtime = OfficialExternalLiveRuntime(
             calibration,
             background,
@@ -177,7 +181,10 @@ class LiveRuntimeRegistry:
                 trajectory_bootstrap_scale_guard=True,
                 trajectory_bootstrap_min_scale_ratio=0.35,
                 trajectory_bootstrap_max_scale_ratio=2.20,
+                trajectory_bootstrap_receiving_side_guard=True,
+                trajectory_bootstrap_net_margin_bu=4.0,
                 trajectory_lock_max_misses=2,
+                net_mount_half_court_mode=net_mount_half_court,
             ),
         )
 
@@ -290,6 +297,7 @@ def health() -> dict[str, Any]:
         "approach_direction_feature_version": "CP-0036.2.4.5",
         "predicted_top3_feature_version": "CP-0036.2.4.6",
         "perspective_bootstrap_scale_feature_version": "CP-0036.2.4.6.1",
+        "net_mount_half_court_feature_version": "CP-0036.2.5",
         "configured": registry.runtime is not None,
     }
 
@@ -521,6 +529,20 @@ async def process_frame(
         payload["trajectory_bootstrap_scale_ratio"] = (
             loop.trajectory_bootstrap_scale_ratio
         )
+        payload["trajectory_bootstrap_side_rejections"] = (
+            loop.trajectory_bootstrap_side_rejections
+        )
+        payload["trajectory_bootstrap_floor_xy_bu"] = (
+            None
+            if loop.trajectory_bootstrap_floor_xy_bu is None
+            else list(loop.trajectory_bootstrap_floor_xy_bu)
+        )
+        payload["trajectory_bootstrap_scope"] = (
+            loop.trajectory_bootstrap_scope
+        )
+        payload["net_mount_half_court_mode"] = bool(
+            runtime.config.net_mount_half_court_mode
+        )
         payload["approach_total_motion_px"] = loop.approach_total_motion_px
         payload["approach_min_motion_px"] = loop.approach_min_motion_px
         payload["approach_prediction_error_px"] = loop.approach_prediction_error_px
@@ -600,6 +622,12 @@ async def process_frame(
         payload["trajectory_bootstrap_scale_observed_px"] = None
         payload["trajectory_bootstrap_scale_expected_px"] = None
         payload["trajectory_bootstrap_scale_ratio"] = None
+        payload["trajectory_bootstrap_side_rejections"] = 0
+        payload["trajectory_bootstrap_floor_xy_bu"] = None
+        payload["trajectory_bootstrap_scope"] = None
+        payload["net_mount_half_court_mode"] = bool(
+            runtime.config.net_mount_half_court_mode
+        )
         payload["approach_total_motion_px"] = 0.0
         payload["approach_min_motion_px"] = 0.0
         payload["approach_prediction_error_px"] = None

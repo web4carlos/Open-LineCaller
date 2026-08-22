@@ -10,6 +10,7 @@ import numpy as np
 
 from linecaller.dcf.external_grid_frame_loop import (
     BallComponent,
+    CalibrationCoverage,
     ExternalGridCalibration,
     rasterized_scale_compatible,
 )
@@ -30,12 +31,10 @@ class PerspectiveBallScaleModel:
     def __init__(self, calibration: ExternalGridCalibration) -> None:
         self.calibration = calibration
         cfg = calibration.config
-        court_y = cfg.court_y_bu(
-            __import__(
-                "linecaller.dcf.external_grid_frame_loop",
-                fromlist=["CalibrationCoverage"],
-            ).CalibrationCoverage.parse(calibration.coverage)
-        )
+        self.coverage = CalibrationCoverage.parse(calibration.coverage)
+        self.court_x_bu = float(cfg.court_x_bu)
+        self.court_y_bu = float(cfg.court_y_bu(self.coverage))
+        court_y = self.court_y_bu
         court = np.asarray(
             (
                 (0.0, court_y),
@@ -58,10 +57,10 @@ class PerspectiveBallScaleModel:
             court,
         )
 
-    def expected_diameter_px(
+    def floor_xy_bu(
         self,
         image_xy: tuple[float, float],
-    ) -> float | None:
+    ) -> tuple[float, float] | None:
         p = np.asarray(
             [[[float(image_xy[0]), float(image_xy[1])]]],
             dtype=np.float32,
@@ -74,6 +73,16 @@ class PerspectiveBallScaleModel:
         y_bu = float(floor[1])
         if not (math.isfinite(x_bu) and math.isfinite(y_bu)):
             return None
+        return x_bu, y_bu
+
+    def expected_diameter_px(
+        self,
+        image_xy: tuple[float, float],
+    ) -> float | None:
+        floor = self.floor_xy_bu(image_xy)
+        if floor is None:
+            return None
+        x_bu, y_bu = floor
 
         lateral = np.asarray(
             [[
@@ -111,6 +120,9 @@ class PredictedTopKSelection:
     bootstrap_scale_observed_px: float | None = None
     bootstrap_scale_expected_px: float | None = None
     bootstrap_scale_ratio: float | None = None
+    bootstrap_side_rejections: int = 0
+    bootstrap_floor_xy_bu: tuple[float, float] | None = None
+    bootstrap_scope: str | None = None
 
 
 class PredictedTopKSelector:
@@ -135,6 +147,9 @@ class PredictedTopKSelector:
         bootstrap_scale_guard: bool = False,
         bootstrap_min_scale_ratio: float = 0.35,
         bootstrap_max_scale_ratio: float = 2.20,
+        bootstrap_receiving_side_guard: bool = False,
+        receiving_side: str | None = None,
+        bootstrap_net_margin_bu: float = 4.0,
         max_misses: int = 2,
     ) -> None:
         self.top_k = int(top_k)
@@ -158,6 +173,15 @@ class PredictedTopKSelector:
             if calibration is not None
             else None
         )
+        self.bootstrap_receiving_side_guard = bool(
+            bootstrap_receiving_side_guard
+        )
+        self.receiving_side = (
+            None
+            if receiving_side is None
+            else str(receiving_side).strip().upper()
+        )
+        self.bootstrap_net_margin_bu = float(bootstrap_net_margin_bu)
         self.max_misses = int(max_misses)
 
         if self.top_k < 1:
@@ -196,6 +220,18 @@ class PredictedTopKSelector:
             raise ValueError(
                 "bootstrap_scale_guard requires calibration"
             )
+        if self.bootstrap_receiving_side_guard:
+            if self._perspective_scale is None:
+                raise ValueError(
+                    "bootstrap_receiving_side_guard requires calibration"
+                )
+            if self.receiving_side not in {"FAR", "NEAR"}:
+                raise ValueError(
+                    "receiving_side must be FAR or NEAR when "
+                    "bootstrap_receiving_side_guard is enabled"
+                )
+        if self.bootstrap_net_margin_bu < 0.0:
+            raise ValueError("bootstrap_net_margin_bu must be >= 0")
         if self.max_misses < 0:
             raise ValueError("max_misses must be >= 0")
 
@@ -204,6 +240,7 @@ class PredictedTopKSelector:
         )
         self._misses = 0
         self._reset_bootstrap_scale_telemetry()
+        self._reset_bootstrap_side_telemetry()
 
     @property
     def locked(self) -> bool:
@@ -226,6 +263,58 @@ class PredictedTopKSelector:
         self._bootstrap_scale_observed_px: float | None = None
         self._bootstrap_scale_expected_px: float | None = None
         self._bootstrap_scale_ratio: float | None = None
+
+    def _reset_bootstrap_side_telemetry(self) -> None:
+        self._bootstrap_side_rejections = 0
+        self._bootstrap_floor_xy_bu: tuple[float, float] | None = None
+        self._bootstrap_scope: str | None = None
+
+    def _bootstrap_side_ok(
+        self,
+        component: BallComponent,
+    ) -> bool:
+        if not self.bootstrap_receiving_side_guard:
+            return True
+        model = self._perspective_scale
+        if model is None:
+            return False
+
+        floor = model.floor_xy_bu(component.centroid_xy)
+        if floor is None:
+            self._bootstrap_side_rejections += 1
+            self._bootstrap_floor_xy_bu = None
+            return False
+
+        _, y_bu = floor
+        margin = self.bootstrap_net_margin_bu
+
+        if model.coverage is CalibrationCoverage.HALF_COURT:
+            # Net-mounted HALF_COURT convention:
+            # y=0 is the baseline, y=court_y is the net edge.
+            # Anything materially beyond the net belongs to the other phone.
+            eligible = y_bu <= model.court_y_bu + margin
+            scope = "NET_MOUNT_HALF_COURT"
+        else:
+            # Engineering FULL_COURT compatibility:
+            # keep bootstrap on the active receiving half only.
+            split = 0.5 * model.court_y_bu
+            if self.receiving_side == "FAR":
+                eligible = y_bu <= split + margin
+                scope = "FULL_FAR_HALF"
+            else:
+                eligible = y_bu >= split - margin
+                scope = "FULL_NEAR_HALF"
+
+        if not eligible:
+            self._bootstrap_side_rejections += 1
+            self._bootstrap_floor_xy_bu = (
+                float(floor[0]),
+                float(floor[1]),
+            )
+            self._bootstrap_scope = scope
+            return False
+
+        return True
 
     def _bootstrap_scale_ok(
         self,
@@ -385,6 +474,7 @@ class PredictedTopKSelector:
                 component
                 for component in components
                 if not component.recovered
+                and self._bootstrap_side_ok(component)
                 and self._bootstrap_scale_ok(component)
                 and self._compatible_scale(target, component)
             ]
@@ -427,6 +517,8 @@ class PredictedTopKSelector:
 
         for current in components:
             if current.recovered:
+                continue
+            if not self._bootstrap_side_ok(current):
                 continue
             if not self._bootstrap_scale_ok(current):
                 continue
@@ -541,6 +633,7 @@ class PredictedTopKSelector:
     ) -> PredictedTopKSelection:
         frame_no = int(frame_no)
         self._reset_bootstrap_scale_telemetry()
+        self._reset_bootstrap_side_telemetry()
         bootstrap_straightness: float | None = None
         bootstrapped = False
 
@@ -575,6 +668,13 @@ class PredictedTopKSelector:
                 bootstrap_scale_ratio=(
                     self._bootstrap_scale_ratio
                 ),
+                bootstrap_side_rejections=(
+                    self._bootstrap_side_rejections
+                ),
+                bootstrap_floor_xy_bu=(
+                    self._bootstrap_floor_xy_bu
+                ),
+                bootstrap_scope=self._bootstrap_scope,
             )
 
         last = prediction.last_component
@@ -651,4 +751,11 @@ class PredictedTopKSelector:
             bootstrap_scale_ratio=(
                 self._bootstrap_scale_ratio
             ),
+            bootstrap_side_rejections=(
+                self._bootstrap_side_rejections
+            ),
+            bootstrap_floor_xy_bu=(
+                self._bootstrap_floor_xy_bu
+            ),
+            bootstrap_scope=self._bootstrap_scope,
         )

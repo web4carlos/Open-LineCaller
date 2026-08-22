@@ -34,6 +34,11 @@ from linecaller.dcf.projected_z0_identity import (
 from linecaller.dcf.contact_appearance_recovery import (
     ContactRecoveryProjectedIdentityExternalGridFrameLoop,
 )
+from linecaller.dcf.net_mount_half_court import (
+    NetMountHalfCourtArea,
+    calibration_for_net_mount_half_court,
+    select_net_mount_half_court_area,
+)
 from linecaller.dcf.z0_floor_glow_renderer import render_soft_floor_glow
 
 
@@ -84,7 +89,13 @@ class OfficialExternalLiveConfig:
     trajectory_bootstrap_scale_guard: bool = False
     trajectory_bootstrap_min_scale_ratio: float = 0.35
     trajectory_bootstrap_max_scale_ratio: float = 2.20
+    trajectory_bootstrap_receiving_side_guard: bool = False
+    trajectory_bootstrap_net_margin_bu: float = 4.0
     trajectory_lock_max_misses: int = 2
+
+    # CP-0036.2.5 production topology: one net-mounted phone per half.
+    # Historical default remains OFF. HALF_COURT Wizard sessions opt in.
+    net_mount_half_court_mode: bool = False
 
     def __post_init__(self) -> None:
         if self.glow_hold_s <= 0.0:
@@ -165,6 +176,10 @@ class OfficialExternalLiveConfig:
             raise ValueError(
                 "trajectory_bootstrap_max_scale_ratio must be >= "
                 "trajectory_bootstrap_min_scale_ratio"
+            )
+        if self.trajectory_bootstrap_net_margin_bu < 0.0:
+            raise ValueError(
+                "trajectory_bootstrap_net_margin_bu must be >= 0"
             )
         if self.trajectory_lock_max_misses < 0:
             raise ValueError(
@@ -273,7 +288,7 @@ class OfficialExternalLiveRuntime:
             config=self.pose_config,
         )
 
-        self._owned_area: OwnedExternalArea
+        self._owned_area: OwnedExternalArea | NetMountHalfCourtArea
         self._runtime_calibration: ExternalGridCalibration
         self._frame_loop: ExternalGridFrameLoop | None
         self._cells_by_id: dict[int, ExternalGridCell]
@@ -390,6 +405,13 @@ class OfficialExternalLiveRuntime:
                 trajectory_bootstrap_max_scale_ratio=(
                     c.trajectory_bootstrap_max_scale_ratio
                 ),
+                trajectory_bootstrap_receiving_side_guard=(
+                    c.trajectory_bootstrap_receiving_side_guard
+                ),
+                trajectory_receiving_side=self._receiving_side,
+                trajectory_bootstrap_net_margin_bu=(
+                    c.trajectory_bootstrap_net_margin_bu
+                ),
                 trajectory_lock_max_misses=(
                     c.trajectory_lock_max_misses
                 ),
@@ -427,15 +449,29 @@ class OfficialExternalLiveRuntime:
         )
 
     def _rebuild_owned_runtime(self) -> None:
-        self._owned_area = select_camera_owned_external_area(
-            self._calibration,
-            self.ownership,
-            self._receiving_side,
-        )
-        self._runtime_calibration = calibration_for_camera_owned_area(
-            self._calibration,
-            self._owned_area,
-        )
+        if self.config.net_mount_half_court_mode:
+            self._owned_area = select_net_mount_half_court_area(
+                self._calibration,
+                camera_id=self.ownership.camera_id,
+                mount_position=self.ownership.mount_position,
+                depth_bu=self.ownership.depth_bu,
+            )
+            self._runtime_calibration = (
+                calibration_for_net_mount_half_court(
+                    self._calibration,
+                    self._owned_area,
+                )
+            )
+        else:
+            self._owned_area = select_camera_owned_external_area(
+                self._calibration,
+                self.ownership,
+                self._receiving_side,
+            )
+            self._runtime_calibration = calibration_for_camera_owned_area(
+                self._calibration,
+                self._owned_area,
+            )
         self._cells_by_id = {
             int(c.cell_id): c for c in self._runtime_calibration.cells
         }
