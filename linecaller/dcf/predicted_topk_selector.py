@@ -413,8 +413,10 @@ class PredictedTopKSelector:
             self._bootstrap_ingress_reason = "NOT_MOVING_INTO_HALF"
             return False
 
-        if self._bootstrap_ingress_rejections == 0:
-            self._bootstrap_ingress_reason = "ACCEPTED"
+        # This chain itself passed ingress. Rejections from other candidates
+        # in the same frame remain counted, but must not overwrite the
+        # evidence/reason for an accepted bootstrap candidate.
+        self._bootstrap_ingress_reason = "ACCEPTED"
         return True
 
     def _bootstrap_scale_ok(
@@ -687,6 +689,17 @@ class PredictedTopKSelector:
             options,
             key=lambda item: item[0],
         )
+
+        # Candidate evaluation can reject distractors before or after the
+        # winning ball option. Refresh ingress telemetry from the selected
+        # winning chain so the UI/result describes the acquired ball rather
+        # than whichever rejected candidate happened to run last.
+        if self.bootstrap_net_ingress_guard:
+            if not self._bootstrap_ingress_ok(chain):
+                raise RuntimeError(
+                    "selected bootstrap chain lost net-ingress eligibility"
+                )
+
         self._history.clear()
         self._history.extend(
             chain[-(self.history_frames + 1):]

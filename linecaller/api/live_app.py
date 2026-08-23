@@ -302,6 +302,7 @@ def health() -> dict[str, Any]:
         "perspective_bootstrap_scale_feature_version": "CP-0036.2.4.6.1",
         "net_mount_half_court_feature_version": "CP-0036.2.5",
         "net_ingress_acquisition_feature_version": "CP-0036.2.6",
+        "player_synthetic_reference_feature_version": "CP-0036.2.7",
         "configured": registry.runtime is not None,
     }
 
