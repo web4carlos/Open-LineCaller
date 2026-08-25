@@ -307,6 +307,7 @@ def health() -> dict[str, Any]:
             "CP-0036.2.7.1"
         ),
         "player_net_half_e2e_truth_feature_version": "CP-0036.2.8",
+        "player_real_video_validation_feature_version": "CP-0036.2.9",
         "configured": registry.runtime is not None,
     }
 
