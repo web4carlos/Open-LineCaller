@@ -401,6 +401,13 @@ class OfficialExternalLiveRuntime:
                 contact_recovery_max_candidates=(
                     c.contact_recovery_max_candidates
                 ),
+                # Player's low net-post projection can move image-up while
+                # the physical ball is descending toward Z0. Net-Ingress
+                # replaces this broadcast-camera image-DOWN predicate only
+                # when the Player acquisition guard is active.
+                approach_direction_gate=(
+                    not c.trajectory_net_ingress_guard
+                ),
                 predicted_top3_candidates=(
                     c.predicted_top3_candidates
                 ),

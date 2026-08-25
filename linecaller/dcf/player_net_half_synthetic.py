@@ -213,7 +213,10 @@ class PlayerNetHalfSyntheticReference:
                 u = (t - 15) / 4.0
                 x = self._lerp(-2.2, -6.0, u)
                 y = self._lerp(18.9, 10.0, u)
-                h = self._lerp(0.0, 24.0, u)
+                # CP-0036.2.8: normalized synthetic rebound. Under the
+                # low net-post homography the first UP sample must remain
+                # inside the unchanged production 0.65..2.25 BU window.
+                h = self._lerp(0.0, 16.0, u)
             frames.append(
                 SyntheticFrameTruth(
                     frame_no,

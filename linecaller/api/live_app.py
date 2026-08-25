@@ -306,6 +306,7 @@ def health() -> dict[str, Any]:
         "player_net_mount_camera_geometry_feature_version": (
             "CP-0036.2.7.1"
         ),
+        "player_net_half_e2e_truth_feature_version": "CP-0036.2.8",
         "configured": registry.runtime is not None,
     }
 
