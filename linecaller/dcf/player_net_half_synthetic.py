@@ -20,22 +20,52 @@ from linecaller.dcf.predicted_topk_selector import PredictedTopKSelector
 
 
 FEATURE_VERSION = "CP-0036.2.7"
+CAMERA_GEOMETRY_FEATURE_VERSION = "CP-0036.2.7.1"
+
+# Physical Player topology: a phone sits at net height near one post and looks
+# diagonally into its local half. Calibration point order remains:
+# net-left, net-right, baseline-right, baseline-left.
+RIGHT_NET_POST_IMAGE_POINTS: tuple[tuple[float, float], ...] = (
+    (150.0, 360.0),
+    (940.0, 530.0),
+    (650.0, 150.0),
+    (360.0, 105.0),
+)
+LEFT_NET_POST_IMAGE_POINTS: tuple[tuple[float, float], ...] = (
+    (20.0, 530.0),
+    (810.0, 360.0),
+    (600.0, 105.0),
+    (310.0, 150.0),
+)
 
 
 @dataclass(frozen=True)
 class SyntheticHalfCourtConfig:
     image_size: tuple[int, int] = (960, 540)
     fps: int = 30
+    camera_mount_side: str = "RIGHT"
     image_points: tuple[tuple[float, float], ...] = (
-        (80.0, 500.0),
-        (880.0, 500.0),
-        (700.0, 120.0),
-        (260.0, 120.0),
+        RIGHT_NET_POST_IMAGE_POINTS
     )
     court_rgb: tuple[int, int, int] = (52, 112, 78)
     outside_rgb: tuple[int, int, int] = (42, 47, 52)
     line_rgb: tuple[int, int, int] = (242, 242, 238)
     ball_rgb: tuple[int, int, int] = (218, 255, 34)
+
+    @classmethod
+    def for_mount_side(cls, side: str) -> "SyntheticHalfCourtConfig":
+        token = str(side).strip().upper()
+        if token == "RIGHT":
+            return cls(
+                camera_mount_side="RIGHT",
+                image_points=RIGHT_NET_POST_IMAGE_POINTS,
+            )
+        if token == "LEFT":
+            return cls(
+                camera_mount_side="LEFT",
+                image_points=LEFT_NET_POST_IMAGE_POINTS,
+            )
+        raise ValueError("camera mount side must be RIGHT or LEFT")
 
 
 @dataclass(frozen=True)
@@ -299,9 +329,17 @@ class PlayerNetHalfSyntheticReference:
         truth = self.truth_frames()
         return {
             "feature_version": FEATURE_VERSION,
+            "camera_geometry_feature_version": (
+                CAMERA_GEOMETRY_FEATURE_VERSION
+            ),
             "product_mode": "PLAYER NET HALF",
+            "camera_model": "LOW_NET_POST_OBLIQUE",
+            "camera_mount_side": self.config.camera_mount_side,
             "coverage": "HALF_COURT",
             "image_size": list(self.config.image_size),
+            "image_points": [
+                list(p) for p in self.config.image_points
+            ],
             "fps": self.config.fps,
             "coordinate_convention": {
                 "x_bu": "0..83 between sidelines",
@@ -446,8 +484,12 @@ def _component(
     )
 
 
-def run_net_ingress_selector_gate() -> dict[str, Any]:
-    scene = PlayerNetHalfSyntheticReference()
+def run_net_ingress_selector_gate_for_mount(
+    mount_side: str,
+) -> dict[str, Any]:
+    scene = PlayerNetHalfSyntheticReference(
+        SyntheticHalfCourtConfig.for_mount_side(mount_side)
+    )
     selector = PredictedTopKSelector(
         calibration=scene.calibration,
         top_k=3,
@@ -513,3 +555,7 @@ def run_net_ingress_selector_gate() -> dict[str, Any]:
         "real_inward_bu": real_result.bootstrap_ingress_delta_bu,
         "lock_error_px": float(lock_error),
     }
+
+def run_net_ingress_selector_gate() -> dict[str, Any]:
+    """CP-0036.2.7 compatibility entry point: default RIGHT Player phone."""
+    return run_net_ingress_selector_gate_for_mount("RIGHT")

@@ -15,7 +15,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from linecaller.dcf.player_net_half_synthetic import (
     PlayerNetHalfSyntheticReference,
-    run_net_ingress_selector_gate,
+    SyntheticHalfCourtConfig,
+    run_net_ingress_selector_gate_for_mount,
 )
 
 
@@ -29,14 +30,23 @@ def main() -> int:
     )
     parser.add_argument("--no-video", action="store_true")
     parser.add_argument("--no-frames", action="store_true")
+    parser.add_argument(
+        "--mount-side",
+        choices=("RIGHT", "LEFT"),
+        default="RIGHT",
+        help="Net-post side used by the synthetic Player phone.",
+    )
     args = parser.parse_args()
 
-    gate = run_net_ingress_selector_gate()
+    gate = run_net_ingress_selector_gate_for_mount(args.mount_side)
     if not gate["passed"]:
         print(json.dumps(gate, indent=2))
         raise SystemExit("Synthetic net-ingress selector gate FAILED.")
 
-    bundle = PlayerNetHalfSyntheticReference().build_bundle(
+    scene = PlayerNetHalfSyntheticReference(
+        SyntheticHalfCourtConfig.for_mount_side(args.mount_side)
+    )
+    bundle = scene.build_bundle(
         Path(args.output),
         write_video=not args.no_video,
         write_frames=not args.no_frames,
@@ -46,6 +56,8 @@ def main() -> int:
     print("Open LineCaller - PLAYER NET HALF synthetic reference")
     print("=" * 72)
     print("Selector gate : PASS")
+    print("Camera model  : LOW_NET_POST_OBLIQUE")
+    print(f"Mount side    : {args.mount_side}")
     print(f"Output        : {Path(bundle.output_dir).resolve()}")
     print(f"Frames        : {bundle.frame_count}")
     print(f"FPS           : {bundle.fps}")

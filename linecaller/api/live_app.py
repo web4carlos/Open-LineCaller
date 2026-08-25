@@ -303,6 +303,9 @@ def health() -> dict[str, Any]:
         "net_mount_half_court_feature_version": "CP-0036.2.5",
         "net_ingress_acquisition_feature_version": "CP-0036.2.6",
         "player_synthetic_reference_feature_version": "CP-0036.2.7",
+        "player_net_mount_camera_geometry_feature_version": (
+            "CP-0036.2.7.1"
+        ),
         "configured": registry.runtime is not None,
     }
 
